@@ -9,23 +9,29 @@ A production-grade AI Market Scanning Engine for the Indian stock market.
   validates them, and stores them in PostgreSQL on a schedule. 5paisa is the first (and
   so far only) provider — swapping in a different broker means writing a new
   `MarketDataProvider` implementation, not touching the collector.
-- **Phase 3** (this version) adds the **Market Feature Engine**: reads validated OHLCV
-  from PostgreSQL (never talks to a broker) and computes ~70 reusable technical features
+- **Phase 3** added the **Market Feature Engine**: reads validated OHLCV from
+  PostgreSQL (never talks to a broker) and computes ~70 reusable technical features
   across 9 categories — trend, momentum, volatility, volume, price action, market
   structure, support/resistance, chart patterns, and relative strength — plus intraday
   session features (opening range, initial balance, day high/low, session VWAP). Written
   once to `daily_features` / `session_features`; scanners read from there and never
   recompute an indicator themselves.
+- **Phase 4** (this version) adds the **Scanner Engine v1**: a Strategy-Pattern
+  framework (`BaseScanner` + `ScannerRegistry`) with one implementation, the
+  **Breakout Scanner**, which qualifies symbols on an aligned EMA stack, ADX trend
+  strength, relative volume, and proximity to resistance, then writes a scored
+  qualified/rejected verdict to `scanner_results` on a one-minute schedule — reading
+  only from `daily_features`, never recomputing an indicator or touching a broker.
 
-Scanners, breakout detection, AI, Telegram, and alerting are still out of scope — this
-is the data + feature layer everything above it will read from.
+AI-driven analysis, Telegram alerting, a dashboard, and order placement are still out of
+scope — this is the data + feature + scanning layer everything above it will read from.
 
 ## Folder structure
 
 ```
 market-intelligence/
 ├── app/
-│   ├── api/              FastAPI routers: /health, /market/*
+│   ├── api/              FastAPI routers: /health, /market/*, /features/*, /scanner/*
 │   ├── config/            Pydantic Settings (env-driven configuration)
 │   ├── core/              Cross-cutting concerns: logging, exceptions, middleware
 │   ├── data/              collector.py, validator.py, market_updater.py
@@ -36,15 +42,20 @@ market-intelligence/
 │   │                      price_action/ structure/ support_resistance/ patterns/
 │   │                      relative_strength/ session/
 │   ├── models/            symbols, daily_prices, intraday_prices, market_status,
-│   │                      collector_logs, daily_features, session_features
+│   │                      collector_logs, daily_features, session_features,
+│   │                      scanner_results, scanner_runs, scanner_logs
 │   ├── providers/         MarketDataProvider (ABC) + FivePaisaProvider
 │   ├── repositories/      All SQLAlchemy queries live here (repository pattern)
+│   ├── scanner/           Scanner engine: models.py (domain dataclasses), base_scanner.py
+│   │                      (Strategy ABC), breakout_scanner.py, validator.py,
+│   │                      scanner_registry.py, scanner_manager.py, engine.py
 │   ├── schemas/           Pydantic request/response schemas
-│   ├── services/          market_service.py, feature_service.py — read-side services
-│   ├── scanners/          Not implemented — future phase
+│   ├── services/          market_service.py, feature_service.py, scanner_service.py
+│   │                      — read-side services
 │   ├── alerts/            Not implemented — future phase
 │   ├── scheduler/         APScheduler wrapper (service.py) + market data jobs (jobs.py)
-│   │                      + feature engine job (feature_jobs.py)
+│   │                      + feature engine job (feature_jobs.py) + scanner job
+│   │                      (scanner_jobs.py)
 │   ├── utils/             Shared helpers
 │   └── main.py            FastAPI app factory, lifespan, router + job registration
 ├── alembic/                Migrations (wired to app settings)
@@ -131,6 +142,41 @@ daily_features / session_features (PostgreSQL)  →  read by /features/* and, la
   some data source (5paisa's scrip master doesn't provide it) — see
   [app/features/relative_strength/calculator.py](app/features/relative_strength/calculator.py).
 
+## Scanner engine architecture
+
+```
+daily_features (PostgreSQL, read-only)
+        ↓
+ScannerRegistry  →  BaseScanner subclasses (Strategy Pattern: validate/scan/score)
+        ↓                    ↑
+ScannerEngine.run_all()   BreakoutScanner v1 (price>EMA20>EMA50>EMA200, ADX, relative
+   opens a scanner_runs      volume, volume increasing, proximity to resistance)
+   row per scanner,
+   delegates to ↓
+ScannerManager  →  per symbol: skip if already scanned today, else validate → scan →
+                    score → upsert into scanner_results (dedup on symbol+scanner+date)
+```
+
+- **Strategy Pattern.** A new scanner is a `BaseScanner` subclass implementing
+  `validate`/`scan`/`score`, registered with `ScannerRegistry` in `app/main.py` — nothing
+  in `ScannerManager` or `ScannerEngine` changes. `save_results` (persistence) is shared,
+  not reimplemented per scanner. See [app/scanner/base_scanner.py](app/scanner/base_scanner.py).
+- **No duplicate alerts.** `scanner_results` is unique on `(symbol_id, scanner_name,
+  date)`; `ScannerManager` skips a symbol outright if a result already exists for that
+  day, and `ScannerResultRepository.upsert` updates in place if one somehow gets written
+  twice.
+- **Configurable thresholds, not hardcoded.** ADX/relative-volume/resistance-proximity
+  thresholds and the composite score's category weights all live in `Settings`
+  (`SCANNER_*` env vars) — see [.env.example](.env.example).
+- **Every symbol gets a score, qualified or not.** A rejected symbol's `scanner_results`
+  row still carries a 0–100 composite score, so rejects and qualifiers stay comparable.
+  A symbol failing `validate()` (missing/out-of-range features) never reaches `scan()` —
+  that's logged to `scanner_logs` with no `scanner_results` row at all.
+- **Known gap (expected, not a bug):** `ema200` requires 200 days of daily history, and
+  most symbols currently have far less backfilled — until that depth exists, the
+  Breakout Scanner's `validate()` legitimately rejects most/all symbols for missing
+  `ema200`, not because the scanning logic is wrong.
+
 ## API endpoints
 
 | Endpoint | Description |
@@ -143,6 +189,10 @@ daily_features / session_features (PostgreSQL)  →  read by /features/* and, la
 | `GET /features/status` | Symbols with features computed, total rows, last run time |
 | `GET /features/latest/{symbol}` | Latest daily feature row + today's session features |
 | `GET /features/history/{symbol}?limit=100` | Daily feature history, oldest first |
+| `GET /scanner/status` | Per-scanner totals: results, qualified count, last run time |
+| `GET /scanner/results?scanner_name=&status=&limit=100` | Recent scan results, optionally filtered |
+| `GET /scanner/results/{symbol}?limit=50` | Scan result history for one symbol |
+| `GET /scanner/runs?scanner_name=&limit=20` | Recent scheduled run summaries |
 
 ## Running with Docker (recommended)
 
@@ -223,7 +273,8 @@ All configuration is environment-driven via `app/config/settings.py`
 [.env.example](.env.example) for the full list of variables (app, server, database,
 Redis, logging, scheduler, 5paisa).
 
-## What's next (out of scope for Phase 3)
+## What's next (out of scope for Phase 4)
 
-Scanners, breakout detection, AI-driven analysis, Telegram alerting, and a dashboard are
-deliberately not implemented yet — this phase is the data + feature layer only.
+Additional scanners (VCP, Momentum, ORB, IPO), Telegram alerting, a dashboard,
+AI-driven analysis, and order placement are deliberately not implemented yet — this
+phase is the Breakout Scanner v1 only.

@@ -28,6 +28,15 @@ class SymbolRepository:
         stmt = select(Symbol).where(Symbol.symbol == symbol, Symbol.exchange == exchange)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_id(self, symbol_id: int) -> Symbol | None:
+        return await self._session.get(Symbol, symbol_id)
+
+    async def list_by_ids(self, symbol_ids: list[int]) -> list[Symbol]:
+        if not symbol_ids:
+            return []
+        stmt = select(Symbol).where(Symbol.id.in_(symbol_ids))
+        return list((await self._session.execute(stmt)).scalars().all())
+
     async def list_active(self) -> list[Symbol]:
         stmt = select(Symbol).where(Symbol.is_active.is_(True)).order_by(Symbol.symbol)
         return list((await self._session.execute(stmt)).scalars().all())

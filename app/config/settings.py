@@ -82,6 +82,23 @@ class Settings(BaseSettings):
     feature_rs_benchmark_symbol: str = "NIFTY"
     feature_daily_lookback_bars: int = 500
 
+    # --- Scanner engine: Breakout Scanner v1 thresholds ---
+    scanner_breakout_adx_threshold: float = 20.0
+    scanner_breakout_relative_volume_threshold: float = 1.5
+    # Separate, deliberately looser than the threshold above: "volume isn't
+    # declining" rather than "volume is unusually high".
+    scanner_breakout_volume_increasing_min_relative_volume: float = 1.0
+    scanner_breakout_resistance_proximity_pct: float = 3.0
+    scanner_min_qualifying_score: float = 60.0
+
+    # --- Scanner engine: composite score weights (should sum to 1.0) ---
+    scanner_score_weight_trend: float = 0.25
+    scanner_score_weight_momentum: float = 0.20
+    scanner_score_weight_volume: float = 0.20
+    scanner_score_weight_volatility: float = 0.10
+    scanner_score_weight_relative_strength: float = 0.10
+    scanner_score_weight_support_resistance: float = 0.15
+
     @field_validator("log_dir", mode="before")
     @classmethod
     def _coerce_log_dir(cls, value: str | Path) -> Path:

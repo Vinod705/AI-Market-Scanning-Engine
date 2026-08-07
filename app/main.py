@@ -9,6 +9,7 @@ from loguru import logger
 from app.api.features import router as features_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
+from app.api.scanner import router as scanner_router
 from app.config.settings import get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import register_exception_handlers, request_context_middleware
@@ -18,8 +19,12 @@ from app.database.session import AsyncSessionLocal, check_database_connection, d
 from app.features.engine import FeatureEngine
 from app.providers.base_provider import ProviderError
 from app.providers.fivepaisa_provider import FivePaisaProvider
+from app.scanner.breakout_scanner import BreakoutScanner
+from app.scanner.engine import ScannerEngine
+from app.scanner.scanner_registry import ScannerRegistry
 from app.scheduler.feature_jobs import register_feature_jobs
 from app.scheduler.jobs import register_market_data_jobs
+from app.scheduler.scanner_jobs import register_scanner_jobs
 from app.scheduler.service import get_scheduler_service
 
 
@@ -51,9 +56,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater)
     feature_engine = FeatureEngine(AsyncSessionLocal, settings)
 
+    scanner_registry = ScannerRegistry()
+    scanner_registry.register(BreakoutScanner(settings))
+    scanner_engine = ScannerEngine(AsyncSessionLocal, scanner_registry)
+
     scheduler_service = get_scheduler_service(settings)
     register_market_data_jobs(scheduler_service, collector, market_updater)
     register_feature_jobs(scheduler_service, feature_engine, market_updater)
+    register_scanner_jobs(scheduler_service, scanner_engine)
     scheduler_service.start()
 
     yield
@@ -81,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(market_router)
     app.include_router(features_router)
+    app.include_router(scanner_router)
 
     return app
 
