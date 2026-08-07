@@ -57,6 +57,22 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_timezone: str = "Asia/Kolkata"
 
+    # --- 5paisa provider ---
+    fivepaisa_app_name: str = ""
+    fivepaisa_app_source: str = ""
+    fivepaisa_user_id: str = ""
+    fivepaisa_password: str = ""
+    fivepaisa_user_key: str = ""
+    fivepaisa_encryption_key: str = ""
+    fivepaisa_client_code: str = ""
+    fivepaisa_pin: str = ""
+    fivepaisa_totp_secret: str = ""
+
+    fivepaisa_request_timeout: float = 10.0
+    fivepaisa_max_retries: int = 3
+    fivepaisa_retry_backoff_seconds: float = 2.0
+    fivepaisa_rate_limit_per_sec: float = 5.0
+
     @field_validator("log_dir", mode="before")
     @classmethod
     def _coerce_log_dir(cls, value: str | Path) -> Path:
@@ -80,6 +96,32 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    @property
+    def fivepaisa_configured(self) -> bool:
+        """Whether enough 5paisa credentials are present to attempt a login."""
+        return bool(
+            self.fivepaisa_app_name
+            and self.fivepaisa_user_id
+            and self.fivepaisa_password
+            and self.fivepaisa_user_key
+            and self.fivepaisa_encryption_key
+            and self.fivepaisa_client_code
+            and self.fivepaisa_pin
+            and self.fivepaisa_totp_secret
+        )
+
+    @property
+    def fivepaisa_cred(self) -> dict[str, str]:
+        """Credential dict in the shape py5paisa.FivePaisaClient expects."""
+        return {
+            "APP_NAME": self.fivepaisa_app_name,
+            "APP_SOURCE": self.fivepaisa_app_source,
+            "USER_ID": self.fivepaisa_user_id,
+            "PASSWORD": self.fivepaisa_password,
+            "USER_KEY": self.fivepaisa_user_key,
+            "ENCRYPTION_KEY": self.fivepaisa_encryption_key,
+        }
 
 
 @lru_cache

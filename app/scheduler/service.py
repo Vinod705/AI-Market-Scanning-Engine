@@ -4,6 +4,9 @@ Phase 1 only provides the framework: start/stop lifecycle wired into the
 FastAPI app, and a registry for future jobs. No jobs are registered yet.
 """
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from apscheduler.job import Job
 from apscheduler.jobstores.memory import MemoryJobStore
@@ -38,17 +41,22 @@ class SchedulerService:
             self._scheduler.shutdown(wait=wait)
             logger.info("Scheduler stopped")
 
-    def add_job(self, func, trigger: BaseTrigger | str, **kwargs) -> Job:
-        """Register a job with the scheduler. No jobs are registered in Phase 1."""
-        return self._scheduler.add_job(func, trigger, **kwargs)
+    def add_job(
+        self, func: Callable[..., Awaitable[None]], trigger: BaseTrigger | str, **kwargs: Any
+    ) -> Job:
+        """Register a job with the scheduler."""
+        job: Job = self._scheduler.add_job(func, trigger, **kwargs)
+        return job
 
     @property
     def running(self) -> bool:
-        return self._scheduler.running
+        running: bool = self._scheduler.running
+        return running
 
     @property
     def jobs(self) -> list[Job]:
-        return self._scheduler.get_jobs()
+        jobs: list[Job] = self._scheduler.get_jobs()
+        return jobs
 
 
 _scheduler_service: SchedulerService | None = None
