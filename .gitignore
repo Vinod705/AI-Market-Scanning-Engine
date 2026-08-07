@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/*.log
+logs/*.zip
+!logs/.gitkeep
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+*.pid
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SSH keys (never commit)
+*.pem
+*.key
