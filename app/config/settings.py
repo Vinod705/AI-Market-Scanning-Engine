@@ -68,7 +68,9 @@ class Settings(BaseSettings):
     fivepaisa_pin: str = ""
     fivepaisa_totp_secret: str = ""
 
-    fivepaisa_request_timeout: float = 10.0
+    # 30s to comfortably cover get_scrips (~165k-row scrip master CSV download,
+    # much larger than a quote/candle call — this is the slowest call by far).
+    fivepaisa_request_timeout: float = 30.0
     fivepaisa_max_retries: int = 3
     fivepaisa_retry_backoff_seconds: float = 2.0
     fivepaisa_rate_limit_per_sec: float = 5.0

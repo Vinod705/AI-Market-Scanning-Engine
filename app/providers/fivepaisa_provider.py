@@ -1,15 +1,18 @@
 """5paisa implementation of `MarketDataProvider`.
 
-Wraps the official `py5paisa` SDK (synchronous, `requests`-based) behind the
+Wraps the official `py5paisa` SDK (synchronous, `httpx`-based) behind the
 async provider interface. All blocking SDK/network calls run in a thread
 executor via `asyncio.to_thread` so the event loop is never blocked.
 
-SDK surface note: `py5paisa`'s exact method names have shifted across
-releases. `_client_call` centralizes every SDK invocation behind
-`getattr`, so if the installed version renamed a method, the failure is a
-clear `ProviderError` naming the missing method rather than a bare
-`AttributeError` deep in a call stack — check the installed `py5paisa`
-version's docs and adjust the method names in this file if needed.
+Written against and verified live against `py5paisa==0.7.21.2` (pinned in
+requirements.txt): `get_totp_session(client_code, totp, pin)` for auth,
+`fetch_market_feed(req_list)` for quotes, `historical_data(Exch,
+ExchangeSegment, ScripCode, time, From, To)` for candles. Older releases
+(pre-0.5) predate TOTP login entirely and only support an email/password/DOB
+or OAuth-redirect flow — if downgrading, this provider needs a rewrite, not
+just a method rename. `_call_with_retry` still centralizes every SDK
+invocation behind `getattr` so a genuinely missing method fails as a clear
+`ProviderError` rather than a bare `AttributeError`.
 """
 
 import asyncio
@@ -17,7 +20,6 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, cast
 
-import httpx
 import pandas as pd
 import pyotp
 from loguru import logger
@@ -32,11 +34,11 @@ from app.providers.base_provider import (
     Quote,
 )
 
-# Public, unauthenticated 5paisa scrip master endpoint. "N" = NSE cash segment.
-# Response is a JSON object with a "Data" array of scrip records.
-_SCRIP_MASTER_URL = (
-    "https://openapi.5paisa.com/VendorsAPI/Service1.svc/ScripMaster/segment/{exchange}"
-)
+# NSE (Exch="N") cash-segment (ExchType="C") equities (Series="EQ") only.
+# The full scrip master also carries BSE/MCX and F&O/currency contracts —
+# out of scope for this phase, and mostly expired/inactive instruments.
+_SYMBOL_EXCHANGE = "N"
+_SYMBOL_SERIES = "EQ"
 
 
 class FivePaisaProvider(MarketDataProvider):
@@ -108,24 +110,28 @@ class FivePaisaProvider(MarketDataProvider):
     # --- data access -----------------------------------------------------
 
     async def get_symbols(self) -> list[ProviderSymbol]:
-        async with httpx.AsyncClient(timeout=self._settings.fivepaisa_request_timeout) as http:
-            try:
-                response = await http.get(_SCRIP_MASTER_URL.format(exchange="N"))
-                response.raise_for_status()
-                payload = response.json()
-            except (httpx.HTTPError, ValueError) as exc:
-                raise ProviderError(f"Failed to download 5paisa scrip master: {exc}") from exc
+        # get_scrips() caches its result on the SDK client (`scrip_data`) for
+        # the client's lifetime. Our client is long-lived (one per provider,
+        # reused across the daily symbol-refresh job), so clear the cache
+        # first — otherwise every run after the first returns the same
+        # snapshot forever and new listings/delistings never show up.
+        if self._client is not None:
+            self._client.scrip_data = None
+        df = await self._call_with_retry("get_scrips")
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            raise ProviderError("5paisa scrip master returned no data")
 
-        records = payload.get("Data", []) if isinstance(payload, dict) else payload
+        subset = df[(df["Exch"] == _SYMBOL_EXCHANGE) & (df["Series"] == _SYMBOL_SERIES)]
+
         symbols: list[ProviderSymbol] = []
-        for record in records:
+        for record in subset.to_dict("records"):
             try:
                 symbols.append(
                     ProviderSymbol(
-                        symbol=str(record["Symbol"]).strip(),
-                        exchange=str(record.get("Exch", "N")).strip(),
+                        symbol=str(record["Name"]).strip(),
+                        exchange=str(record["Exch"]).strip(),
                         instrument_token=str(record["ScripCode"]).strip(),
-                        company_name=record.get("Name") or record.get("FullName"),
+                        company_name=str(record.get("FullName") or "").strip() or None,
                     )
                 )
             except (KeyError, TypeError):
