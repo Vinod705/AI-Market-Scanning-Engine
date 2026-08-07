@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     fivepaisa_retry_backoff_seconds: float = 2.0
     fivepaisa_rate_limit_per_sec: float = 5.0
 
+    # --- Feature engine ---
+    # rs_vs_nifty stays null until a symbol with this name exists in `symbols`
+    # — the 5paisa scrip master (filtered to NSE cash-segment equities) does
+    # not currently include index instruments.
+    feature_rs_benchmark_symbol: str = "NIFTY"
+    feature_daily_lookback_bars: int = 500
+
     @field_validator("log_dir", mode="before")
     @classmethod
     def _coerce_log_dir(cls, value: str | Path) -> Path:

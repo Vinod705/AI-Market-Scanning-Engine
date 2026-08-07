@@ -4,14 +4,21 @@ A production-grade AI Market Scanning Engine for the Indian stock market.
 
 - **Phase 1** shipped the infrastructure: FastAPI app skeleton, async SQLAlchemy +
   Alembic, Docker/Compose deployment, logging, scheduler framework.
-- **Phase 2** (this version) adds the **Market Data Collection Engine**: a
-  provider-abstracted pipeline that authenticates against a broker API, downloads
-  symbols/quotes/candles, validates them, and stores them in PostgreSQL on a schedule.
-  5paisa is the first (and so far only) provider — swapping in a different broker means
-  writing a new `MarketDataProvider` implementation, not touching the collector.
+- **Phase 2** added the **Market Data Collection Engine**: a provider-abstracted
+  pipeline that authenticates against a broker API, downloads symbols/quotes/candles,
+  validates them, and stores them in PostgreSQL on a schedule. 5paisa is the first (and
+  so far only) provider — swapping in a different broker means writing a new
+  `MarketDataProvider` implementation, not touching the collector.
+- **Phase 3** (this version) adds the **Market Feature Engine**: reads validated OHLCV
+  from PostgreSQL (never talks to a broker) and computes ~70 reusable technical features
+  across 9 categories — trend, momentum, volatility, volume, price action, market
+  structure, support/resistance, chart patterns, and relative strength — plus intraday
+  session features (opening range, initial balance, day high/low, session VWAP). Written
+  once to `daily_features` / `session_features`; scanners read from there and never
+  recompute an indicator themselves.
 
-Scanners, indicators, breakout detection, AI, Telegram, and alerting are still out of
-scope — this is the data layer everything else will read from.
+Scanners, breakout detection, AI, Telegram, and alerting are still out of scope — this
+is the data + feature layer everything above it will read from.
 
 ## Folder structure
 
@@ -23,15 +30,21 @@ market-intelligence/
 │   ├── core/              Cross-cutting concerns: logging, exceptions, middleware
 │   ├── data/              collector.py, validator.py, market_updater.py
 │   ├── database/          SQLAlchemy async engine, session factory, declarative base
-│   ├── models/            symbols, daily_prices, intraday_prices, market_status, collector_logs
+│   ├── features/          Feature engine: engine.py, calculator.py (aggregator),
+│   │                      validator.py, indicators.py (shared math), + one calculator.py
+│   │                      per category: trend/ momentum/ volatility/ volume/
+│   │                      price_action/ structure/ support_resistance/ patterns/
+│   │                      relative_strength/ session/
+│   ├── models/            symbols, daily_prices, intraday_prices, market_status,
+│   │                      collector_logs, daily_features, session_features
 │   ├── providers/         MarketDataProvider (ABC) + FivePaisaProvider
 │   ├── repositories/      All SQLAlchemy queries live here (repository pattern)
 │   ├── schemas/           Pydantic request/response schemas
-│   ├── services/          market_service.py — read-side service backing the API
+│   ├── services/          market_service.py, feature_service.py — read-side services
 │   ├── scanners/          Not implemented — future phase
-│   ├── indicators/        Not implemented — future phase
 │   ├── alerts/            Not implemented — future phase
 │   ├── scheduler/         APScheduler wrapper (service.py) + market data jobs (jobs.py)
+│   │                      + feature engine job (feature_jobs.py)
 │   ├── utils/             Shared helpers
 │   └── main.py            FastAPI app factory, lifespan, router + job registration
 ├── alembic/                Migrations (wired to app settings)
@@ -84,6 +97,40 @@ Set the `FIVEPAISA_*` variables in `.env` (see [.env.example](.env.example)). Le
 blank in dev — `Settings.fivepaisa_configured` is `False`, the provider stays
 disconnected, and scheduled jobs log a warning and skip themselves instead of crashing.
 
+## Feature engine architecture
+
+```
+PostgreSQL (daily_prices / intraday_prices)
+        ↓
+FeatureEngine.run_daily()    — per symbol: has a newer daily candle arrived than the
+        ↓                       last computed feature row? if so, recompute the full
+DailyFeatureCalculator          vectorized series over a lookback window (pandas, all
+  (9 category calculators)      in memory) and write only the new date(s).
+        ↓
+FeatureValidator (bounds-clip)
+        ↓
+daily_features / session_features (PostgreSQL)  →  read by /features/* and, later, scanners
+```
+
+- **Never touches a broker.** Only reads OHLCV already validated and stored by the
+  Phase 2 collector.
+- **Vectorized, stateless recompute.** Each run loads a bounded lookback window
+  (`feature_daily_lookback_bars`, default 500 bars) and recomputes the whole series with
+  pandas — no incremental/recursive state to get subtly wrong — then only *writes* rows
+  newer than what's already stored, so re-running is cheap and duplicate-free.
+- **Session features are different in kind.** They're the live state of *today* (opening
+  range, day high/low, intraday VWAP), recomputed and overwritten every run rather than
+  appended to, unlike the daily categories.
+- **Chart patterns are heuristics, not ML.** Triangle/flag/cup-handle/VCP/etc. are
+  documented rule-based approximations meant as scanner pre-filters — see the module
+  docstring in [app/features/patterns/calculator.py](app/features/patterns/calculator.py).
+- **Known gaps, both documented in code:** `rs_vs_nifty` stays `null` until a symbol
+  named `NIFTY` (or whatever `FEATURE_RS_BENCHMARK_SYMBOL` is set to) exists in
+  `symbols` — the current NSE-equities-only scrip master filter excludes indices.
+  `rs_vs_sector` / `sector_rank` stay `null` until `Symbol.sector` is populated from
+  some data source (5paisa's scrip master doesn't provide it) — see
+  [app/features/relative_strength/calculator.py](app/features/relative_strength/calculator.py).
+
 ## API endpoints
 
 | Endpoint | Description |
@@ -93,6 +140,9 @@ disconnected, and scheduled jobs log a warning and skip themselves instead of cr
 | `GET /market/status` | `market_open`, `provider_connected`, `last_update/success/failure` |
 | `GET /market/symbols` | Active symbols from the local symbol master |
 | `GET /market/latest/{symbol}` | Latest intraday candle, falling back to latest daily |
+| `GET /features/status` | Symbols with features computed, total rows, last run time |
+| `GET /features/latest/{symbol}` | Latest daily feature row + today's session features |
+| `GET /features/history/{symbol}?limit=100` | Daily feature history, oldest first |
 
 ## Running with Docker (recommended)
 
@@ -173,8 +223,7 @@ All configuration is environment-driven via `app/config/settings.py`
 [.env.example](.env.example) for the full list of variables (app, server, database,
 Redis, logging, scheduler, 5paisa).
 
-## What's next (out of scope for Phase 2)
+## What's next (out of scope for Phase 3)
 
-Technical indicators, scanners, breakout detection, AI-driven analysis, Telegram
-alerting, and a dashboard are deliberately not implemented yet — this phase is the data
-collection layer only.
+Scanners, breakout detection, AI-driven analysis, Telegram alerting, and a dashboard are
+deliberately not implemented yet — this phase is the data + feature layer only.

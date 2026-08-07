@@ -4,6 +4,7 @@ Services and the collector depend on these repositories rather than the ORM
 session directly, keeping persistence concerns out of business logic.
 """
 
+from datetime import date as date_
 from datetime import datetime
 
 from sqlalchemy import select
@@ -117,6 +118,30 @@ class PriceRepository:
             .limit(1)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_daily_history(self, symbol_id: int, limit: int = 500) -> list[DailyPrice]:
+        """Most recent `limit` daily bars for `symbol_id`, oldest first (ready for vectorized calc)."""
+        stmt = (
+            select(DailyPrice)
+            .where(DailyPrice.symbol_id == symbol_id)
+            .order_by(DailyPrice.date.desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return list(reversed(rows))
+
+    async def get_intraday_for_date(self, symbol_id: int, day: date_) -> list[IntradayPrice]:
+        """All intraday bars for `symbol_id` on `day`, oldest first."""
+        stmt = (
+            select(IntradayPrice)
+            .where(
+                IntradayPrice.symbol_id == symbol_id,
+                IntradayPrice.datetime >= datetime.combine(day, datetime.min.time()),
+                IntradayPrice.datetime < datetime.combine(day, datetime.max.time()),
+            )
+            .order_by(IntradayPrice.datetime.asc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
 
 
 class MarketStatusRepository:

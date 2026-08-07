@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
 
+from app.api.features import router as features_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
 from app.config.settings import get_settings
@@ -14,8 +15,10 @@ from app.core.middleware import register_exception_handlers, request_context_mid
 from app.data.collector import MarketDataCollector
 from app.data.market_updater import MarketStatusUpdater
 from app.database.session import AsyncSessionLocal, check_database_connection, dispose_engine
+from app.features.engine import FeatureEngine
 from app.providers.base_provider import ProviderError
 from app.providers.fivepaisa_provider import FivePaisaProvider
+from app.scheduler.feature_jobs import register_feature_jobs
 from app.scheduler.jobs import register_market_data_jobs
 from app.scheduler.service import get_scheduler_service
 
@@ -46,9 +49,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     market_updater = MarketStatusUpdater(AsyncSessionLocal)
     collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater)
+    feature_engine = FeatureEngine(AsyncSessionLocal, settings)
 
     scheduler_service = get_scheduler_service(settings)
     register_market_data_jobs(scheduler_service, collector, market_updater)
+    register_feature_jobs(scheduler_service, feature_engine, market_updater)
     scheduler_service.start()
 
     yield
@@ -75,6 +80,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(market_router)
+    app.include_router(features_router)
 
     return app
 
