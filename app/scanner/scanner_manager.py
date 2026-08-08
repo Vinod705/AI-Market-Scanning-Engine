@@ -13,11 +13,8 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.symbol import Symbol
-from app.repositories.feature_repository import DailyFeatureRepository
-from app.repositories.market_repository import PriceRepository
 from app.repositories.scanner_repository import ScannerLogRepository, ScannerResultRepository
 from app.scanner.base_scanner import BaseScanner
-from app.scanner.models import ScanContext
 
 
 @dataclass
@@ -67,30 +64,24 @@ class ScannerManager:
         self, scanner: BaseScanner, symbol: Symbol, run_id: int, stats: ScannerRunStats
     ) -> None:
         async with self._session_factory() as session:
-            feature_repo = DailyFeatureRepository(session)
             result_repo = ScannerResultRepository(session)
             log_repo = ScannerLogRepository(session)
 
-            features = await feature_repo.get_latest(symbol.id)
-            if features is None:
+            context = await scanner.build_context(session, symbol)
+            if context is None:
                 await log_repo.log(
                     run_id=run_id,
                     scanner_name=scanner.name,
                     level="info",
-                    message="no features computed yet",
+                    message="no context available (e.g. no features computed yet)",
                     symbol_id=symbol.id,
                 )
                 stats.rejected_count += 1
                 await session.commit()
                 return
 
-            if await result_repo.exists_for_date(symbol.id, scanner.name, features.date):
-                return  # already scanned for this feature date — nothing new to do
-
-            latest_price = await PriceRepository(session).get_latest_daily(symbol.id)
-            context = ScanContext(
-                symbol=symbol, features=features, price=latest_price.close if latest_price else None
-            )
+            if await result_repo.exists_for_date(symbol.id, scanner.name, context.scan_date):
+                return  # already scanned for this date — nothing new to do
 
             validation = scanner.validate(context)
             if not validation.valid:
@@ -107,7 +98,7 @@ class ScannerManager:
 
             outcome = scanner.scan(context)
             score = scanner.score(context)
-            await scanner.save_results(result_repo, context, outcome, score, features.date)
+            await scanner.save_results(result_repo, context, outcome, score, context.scan_date)
 
             if outcome.qualified:
                 stats.qualified_count += 1

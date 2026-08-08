@@ -156,3 +156,51 @@ async def test_health_check_success() -> None:
 async def test_health_check_failure() -> None:
     provider = _provider(lambda r: httpx.Response(401, json={"ok": False}))
     assert await provider.health_check() is False
+
+
+# --- Multiple independent bot instances (IPO/F&O routing) ---
+
+
+def test_default_channel_name_and_credentials() -> None:
+    provider = TelegramProvider(_settings())
+    assert provider.name == "telegram"
+    assert provider.default_recipient == "123456789"
+    assert provider.configured is True
+
+
+def test_overridden_bot_token_and_chat_id_are_independent_of_default() -> None:
+    provider = TelegramProvider(
+        _settings(),
+        bot_token="ipo-bot-token",
+        chat_id="987654321",
+        channel_name="telegram_ipo",
+    )
+    assert provider.name == "telegram_ipo"
+    assert provider.default_recipient == "987654321"
+    assert provider._base_url == "https://api.telegram.org/botipo-bot-token"
+
+
+def test_unconfigured_ipo_bot_does_not_affect_default_bot() -> None:
+    """The default bot has real credentials; a second instance built with
+    empty overrides for the IPO bot must independently report unconfigured
+    — one bot's credentials never leak into another's."""
+    settings = _settings()  # default bot IS configured
+    default_provider = TelegramProvider(settings, channel_name="telegram")
+    ipo_provider = TelegramProvider(settings, bot_token="", chat_id="", channel_name="telegram_ipo")
+
+    assert default_provider.configured is True
+    assert ipo_provider.configured is False
+
+
+async def test_unconfigured_overridden_bot_fails_without_retry() -> None:
+    provider = TelegramProvider(
+        _settings(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))),
+        bot_token="",
+        chat_id="",
+        channel_name="telegram_fno",
+    )
+    result = await provider.send_message(recipient="anything", text="hello")
+    assert result.success is False
+    assert result.retryable is False
+    assert "telegram_fno" in (result.error_message or "")

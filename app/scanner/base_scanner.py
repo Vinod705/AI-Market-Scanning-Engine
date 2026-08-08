@@ -15,8 +15,13 @@ from abc import ABC, abstractmethod
 from datetime import date as date_
 from decimal import Decimal
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.symbol import Symbol
+from app.repositories.feature_repository import DailyFeatureRepository
+from app.repositories.market_repository import PriceRepository
 from app.repositories.scanner_repository import ScannerResultRepository
-from app.scanner.models import ScanContext, ScanOutcome, ValidationResult
+from app.scanner.models import ScanContext, ScannerContext, ScanOutcome, ValidationResult
 
 
 class BaseScanner(ABC):
@@ -24,20 +29,46 @@ class BaseScanner(ABC):
 
     name: str
 
+    async def get_candidate_symbols(
+        self, session: AsyncSession, all_symbols: list[Symbol]
+    ) -> list[Symbol]:
+        """Symbols this scanner should evaluate. Defaults to every active
+        symbol — `breakout_v1`'s existing, unchanged behavior. Override to
+        scope to a narrower universe (see the F&O/IPO candidate scanners
+        in `app/candidates/`, which only care about `UniverseProvider`'s
+        FNO/IPO sets, not the full listed universe)."""
+        return all_symbols
+
+    async def build_context(self, session: AsyncSession, symbol: Symbol) -> ScannerContext | None:
+        """Build the input `validate`/`scan`/`score` operate on for one
+        symbol. Returns None to skip the symbol entirely (e.g. no features
+        computed yet). Default: the DailyFeature + latest close price shape
+        every scanner used before this hook existed — override to build a
+        different context (see `app.candidates.models.CandidateContext`,
+        which additionally needs fundamental/technical scoring and
+        session-level data `ScanContext` doesn't carry)."""
+        features = await DailyFeatureRepository(session).get_latest(symbol.id)
+        if features is None:
+            return None
+        latest_price = await PriceRepository(session).get_latest_daily(symbol.id)
+        return ScanContext(
+            symbol=symbol, features=features, price=latest_price.close if latest_price else None
+        )
+
     @abstractmethod
-    def validate(self, context: ScanContext) -> ValidationResult:
+    def validate(self, context: ScannerContext) -> ValidationResult:
         """Check `context` has what this scanner needs. Called before `scan()`;
         if invalid, `scan()`/`score()` are never called for that symbol."""
         raise NotImplementedError
 
     @abstractmethod
-    def scan(self, context: ScanContext) -> ScanOutcome:
+    def scan(self, context: ScannerContext) -> ScanOutcome:
         """Apply the scanner's rule set. Returns whether the symbol qualifies
         and a human-readable reason (which rules passed/failed)."""
         raise NotImplementedError
 
     @abstractmethod
-    def score(self, context: ScanContext) -> float:
+    def score(self, context: ScannerContext) -> float:
         """A 0-100 composite score, independent of the qualified/rejected
         verdict — even a rejected symbol gets a score, so a scanner_results
         row is always comparable to others."""
@@ -46,7 +77,7 @@ class BaseScanner(ABC):
     async def save_results(
         self,
         repository: ScannerResultRepository,
-        context: ScanContext,
+        context: ScannerContext,
         outcome: ScanOutcome,
         score: float,
         scan_date: date_,

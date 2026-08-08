@@ -44,13 +44,16 @@ class ScannerEngine:
             symbols = await SymbolRepository(session).list_active()
 
         for scanner in self._registry.get_all():
+            async with self._session_factory() as session:
+                candidate_symbols = await scanner.get_candidate_symbols(session, symbols)
+
             start_time = datetime.now()
             async with self._session_factory() as session:
                 run = await ScannerRunRepository(session).start(scanner.name, start_time)
                 run_id = run.id
                 await session.commit()
 
-            stats = await self._manager.run_scanner(scanner, symbols, run_id)
+            stats = await self._manager.run_scanner(scanner, candidate_symbols, run_id)
 
             finish_time = datetime.now()
             async with self._session_factory() as session:

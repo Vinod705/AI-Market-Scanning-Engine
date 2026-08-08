@@ -12,3 +12,5 @@ class HealthResponse(BaseModel):
     decision_engine: str = "unknown"
     alert_queue: str = "unknown"
     telegram: str = "unknown"
+    telegram_ipo: str = "unknown"
+    telegram_fno: str = "unknown"

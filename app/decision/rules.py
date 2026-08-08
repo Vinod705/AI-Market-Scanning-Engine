@@ -27,11 +27,42 @@ REQUIRED_FEATURE_KEYS = [
     "resistance_level",
 ]
 
+# breakout_v1's rule set (EMA-stack trend + resistance proximity, plus the
+# EMA200-dependent required-features list above) encodes assumptions
+# specific to that one strategy: a long, established uptrend breaking a
+# well-defined resistance level. The F&O/IPO candidate scanners (see
+# `app/candidates/`) express the equivalent "is this actionable now"
+# judgment through their own setup-state machine
+# (PRE_BREAKOUT/BREAKOUT_CONFIRMED/MOMENTUM) instead — and for IPOs
+# specifically, an EMA200 requirement would reject every candidate by
+# construction (a recent listing rarely has 200 days of history), not
+# because the setup is actually weak. Rather than fork a second
+# DecisionEvaluator, each affected rule below consults these tables to
+# decide which checks apply to a given `scanner_name`; any scanner not
+# listed gets the permissive default, not breakout_v1's strict one.
+CANDIDATE_REQUIRED_FEATURE_KEYS = ["price", "adx14", "relative_volume"]
+REQUIRED_FEATURES_BY_SCANNER: dict[str, list[str]] = {
+    "breakout_v1": REQUIRED_FEATURE_KEYS,
+}
+
+# Scanners whose candidates should be judged by the EMA-stack trend check:
+# only breakout_v1's whole premise is a long-established, aligned uptrend.
+TREND_STACK_SCANNERS = {"breakout_v1"}
+
+# Scanners whose candidates should be judged by proximity to a resistance
+# level: breakout_v1 (breaking one now) and pre_breakout_v1 (approaching
+# one — proximity IS the setup). fno_momentum_v1/ipo_intraday_v1
+# candidates are, by definition, already past that point.
+RESISTANCE_PROXIMITY_SCANNERS = {"breakout_v1", "pre_breakout_v1"}
+
 
 def check_required_features(
     candidate: DecisionCandidate, settings: Settings, *, now: datetime | None = None
 ) -> RuleResult:
-    missing = DecisionValidator.missing_features(candidate.feature_snapshot, REQUIRED_FEATURE_KEYS)
+    required = REQUIRED_FEATURES_BY_SCANNER.get(
+        candidate.scanner_name, CANDIDATE_REQUIRED_FEATURE_KEYS
+    )
+    missing = DecisionValidator.missing_features(candidate.feature_snapshot, required)
     if missing:
         return RuleResult(
             rule_name="required_features",
@@ -89,6 +120,14 @@ def check_minimum_score(
 def check_trend(
     candidate: DecisionCandidate, settings: Settings, *, now: datetime | None = None
 ) -> RuleResult:
+    if candidate.scanner_name not in TREND_STACK_SCANNERS:
+        return RuleResult(
+            rule_name="trend",
+            status=RuleStatus.PASS,
+            actual_value=None,
+            required_value=None,
+            reason=f"not applicable for {candidate.scanner_name}",
+        )
     ema20 = DecisionValidator.as_float(candidate.feature_snapshot, "ema20")
     ema50 = DecisionValidator.as_float(candidate.feature_snapshot, "ema50")
     ema200 = DecisionValidator.as_float(candidate.feature_snapshot, "ema200")
@@ -161,6 +200,14 @@ def check_adx(
 def check_resistance_proximity(
     candidate: DecisionCandidate, settings: Settings, *, now: datetime | None = None
 ) -> RuleResult:
+    if candidate.scanner_name not in RESISTANCE_PROXIMITY_SCANNERS:
+        return RuleResult(
+            rule_name="resistance_proximity",
+            status=RuleStatus.PASS,
+            actual_value=None,
+            required_value=None,
+            reason=f"not applicable for {candidate.scanner_name}",
+        )
     price = DecisionValidator.as_float(candidate.feature_snapshot, "price")
     resistance = DecisionValidator.as_float(candidate.feature_snapshot, "resistance_level")
     if price is None or resistance is None or resistance == 0:

@@ -1,11 +1,14 @@
 """NotificationManager: the queue consumer that actually sends alerts.
 
 Runs as a long-lived background task (`run_forever`), pulling alert ids off
-the `AlertQueue` one at a time and sending them through the configured
-`NotificationProvider`. Retries transient failures with exponential
-backoff up to `Settings.alert_max_retries`; a permanent failure (or
-exhausted retries) is recorded as FAILED and never crashes the worker loop
-— one bad message must never take the whole pipeline down.
+the `AlertQueue` one at a time and routing each to the right
+`NotificationProvider` via `NotificationRouter` (see
+`app/notifications/router.py` — IPO alerts to the IPO bot, F&O alerts to
+the F&O bot, everything else to the original default bot). Retries
+transient failures with exponential backoff up to `Settings.alert_max_retries`;
+a permanent failure (or exhausted retries) is recorded as FAILED and never
+crashes the worker loop — one bad message must never take the whole
+pipeline down.
 """
 
 import asyncio
@@ -16,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.alerts.formatter import AlertMessageContext, AlertMessageFormatter
 from app.alerts.queue import AlertQueue
 from app.config.settings import Settings
-from app.notifications.base import NotificationProvider
+from app.notifications.router import NotificationRouter
 from app.repositories.alert_repository import (
     AlertDeliveryLogRepository,
     AlertEventRepository,
@@ -31,16 +34,16 @@ class NotificationManager:
         session_factory: async_sessionmaker[AsyncSession],
         settings: Settings,
         queue: AlertQueue,
-        provider: NotificationProvider,
+        router: NotificationRouter,
     ) -> None:
         self._session_factory = session_factory
         self._settings = settings
         self._queue = queue
-        self._provider = provider
+        self._router = router
         self._stopping = False
 
     async def run_forever(self) -> None:
-        logger.info("Notification worker started ({provider})", provider=self._provider.name)
+        logger.info("Notification worker started")
         while not self._stopping:
             queued = await self._queue.get()
             try:
@@ -82,6 +85,11 @@ class NotificationManager:
                 return
             if alert.status == "SENT":
                 return  # already delivered — restart-recovery safety net
+            alert_category = (alert.feature_snapshot or {}).get("alert_category")
+
+        # Resolved once per alert (not per retry attempt) — routing is a
+        # property of the alert itself, not of a transient send attempt.
+        provider = self._router.resolve(alert_category if isinstance(alert_category, str) else None)
 
         attempt = 0
         while attempt < self._settings.alert_max_retries:
@@ -93,18 +101,16 @@ class NotificationManager:
             logger.info(
                 "Sending alert #{id} via {provider} (attempt {attempt}/{max})",
                 id=alert_id,
-                provider=self._provider.name,
+                provider=provider.name,
                 attempt=attempt,
                 max=self._settings.alert_max_retries,
             )
-            result = await self._provider.send_message(
-                recipient=self._settings.telegram_chat_id, text=text
-            )
+            result = await provider.send_message(recipient=provider.default_recipient, text=text)
 
             async with self._session_factory() as session:
                 await AlertDeliveryLogRepository(session).log_attempt(
                     alert_id=alert_id,
-                    provider=self._provider.name,
+                    provider=provider.name,
                     status=result.status,
                     attempt_number=attempt,
                     response_metadata=result.response_metadata,
@@ -162,6 +168,7 @@ class NotificationManager:
             symbol_name = symbol.symbol if symbol is not None else str(alert.symbol_id)
             context = AlertMessageContext(
                 symbol=symbol_name,
+                scanner_name=alert.scanner_name,
                 score=float(alert.score),
                 quality=alert.quality,
                 breakout_level=(

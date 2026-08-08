@@ -141,6 +141,30 @@ class FivePaisaProvider(MarketDataProvider):
         logger.info("Loaded {count} symbols from 5paisa scrip master", count=len(symbols))
         return symbols
 
+    async def get_fno_symbol_roots(self) -> set[str]:
+        """Underlying stock symbols that currently have NSE derivative
+        (futures/options) contracts — derived from the same scrip master
+        `get_symbols()` uses, not a separate/invented data source.
+
+        `Exch="N", ExchType="D"` is the derivatives segment; `SymbolRoot`
+        gives the underlying (e.g. "TCS" for every TCS future/option
+        contract regardless of expiry/strike). This also includes index
+        derivatives (NIFTY, BANKNIFTY, ...) — callers are expected to
+        intersect the result with known equity symbols to exclude those,
+        since an index has no underlying cash-market row of its own. See
+        `app.universe.provider.UniverseProvider.get_fno_universe`.
+        """
+        if self._client is not None:
+            self._client.scrip_data = None
+        df = await self._call_with_retry("get_scrips")
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            raise ProviderError("5paisa scrip master returned no data")
+
+        derivatives = df[(df["Exch"] == _SYMBOL_EXCHANGE) & (df["ExchType"] == "D")]
+        roots = {str(root).strip() for root in derivatives["SymbolRoot"].dropna().unique()}
+        logger.info("Found {count} distinct F&O underlying roots", count=len(roots))
+        return roots
+
     async def get_quote(self, symbol: str) -> Quote:
         provider_symbol = await self._resolve_symbol(symbol)
         req = [

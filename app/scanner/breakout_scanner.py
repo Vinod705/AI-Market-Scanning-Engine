@@ -14,7 +14,7 @@ from `Settings` rather than being hardcoded:
 
 from app.config.settings import Settings
 from app.scanner.base_scanner import BaseScanner
-from app.scanner.models import ScanContext, ScanOutcome, ValidationResult
+from app.scanner.models import ScanContext, ScannerContext, ScanOutcome, ValidationResult
 from app.scanner.validator import ScannerValidator
 
 _REQUIRED_FIELDS = ["ema20", "ema50", "ema200", "adx14", "relative_volume", "resistance_level"]
@@ -30,13 +30,15 @@ class BreakoutScanner(BaseScanner):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    def validate(self, context: ScanContext) -> ValidationResult:
+    def validate(self, context: ScannerContext) -> ValidationResult:
+        assert isinstance(context, ScanContext)
         field_check = ScannerValidator.require_fields(context, ["price", *_REQUIRED_FIELDS])
         if not field_check.valid:
             return field_check
         return ScannerValidator.require_ranges(context, _RANGE_CHECKS)
 
-    def scan(self, context: ScanContext) -> ScanOutcome:
+    def scan(self, context: ScannerContext) -> ScanOutcome:
+        assert isinstance(context, ScanContext)
         features = context.features
         settings = self._settings
 
@@ -73,7 +75,8 @@ class BreakoutScanner(BaseScanner):
 
         return ScanOutcome(qualified=qualified, reason=reason)
 
-    def score(self, context: ScanContext) -> float:
+    def score(self, context: ScannerContext) -> float:
+        assert isinstance(context, ScanContext)
         features = context.features
         settings = self._settings
 

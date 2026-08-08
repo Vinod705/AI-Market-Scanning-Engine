@@ -11,6 +11,7 @@ the test client, which doesn't run the lifespan) degrades gracefully to
 from fastapi import APIRouter, Request
 
 from app.database.session import check_database_connection
+from app.notifications.telegram import TelegramProvider
 from app.schemas.health import HealthResponse
 
 router = APIRouter(tags=["health"])
@@ -36,14 +37,16 @@ async def health_check(request: Request) -> HealthResponse:
     alert_queue = getattr(state, "alert_queue", None)
     alert_queue_status = "healthy" if alert_queue is not None else "unavailable"
 
-    telegram_provider = getattr(state, "telegram_provider", None)
-    settings = getattr(state, "settings", None)
-    if telegram_provider is None or settings is None:
-        telegram = "unavailable"
-    elif not settings.telegram_configured:
-        telegram = "not_configured"
-    else:
-        telegram = "healthy" if await telegram_provider.health_check() else "unhealthy"
+    async def _telegram_status(telegram_provider: TelegramProvider | None) -> str:
+        if telegram_provider is None:
+            return "unavailable"
+        if not telegram_provider.configured:
+            return "not_configured"
+        return "healthy" if await telegram_provider.health_check() else "unhealthy"
+
+    telegram = await _telegram_status(getattr(state, "telegram_provider", None))
+    telegram_ipo = await _telegram_status(getattr(state, "ipo_telegram_provider", None))
+    telegram_fno = await _telegram_status(getattr(state, "fno_telegram_provider", None))
 
     return HealthResponse(
         status="healthy" if database == "healthy" else "degraded",
@@ -54,4 +57,6 @@ async def health_check(request: Request) -> HealthResponse:
         decision_engine=scheduler_status,
         alert_queue=alert_queue_status,
         telegram=telegram,
+        telegram_ipo=telegram_ipo,
+        telegram_fno=telegram_fno,
     )

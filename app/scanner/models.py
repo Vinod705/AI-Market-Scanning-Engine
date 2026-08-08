@@ -10,9 +10,29 @@ lets `BaseScanner` subclasses stay free of persistence and HTTP concerns.
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Protocol, runtime_checkable
 
 from app.models.daily_feature import DailyFeature
 from app.models.symbol import Symbol
+
+
+@runtime_checkable
+class ScannerContext(Protocol):
+    """Structural contract every scan context satisfies.
+
+    `ScanContext` below (breakout_v1) and `app.candidates.models.CandidateContext`
+    (the F&O/IPO candidate scanners) both implement this without sharing a
+    base class — that's what lets `BaseScanner`/`ScannerManager` stay
+    agnostic to which shape a given scanner actually uses.
+    """
+
+    @property
+    def symbol(self) -> Symbol: ...
+
+    @property
+    def scan_date(self) -> date: ...
+
+    def feature_snapshot(self) -> dict[str, object]: ...
 
 
 @dataclass
@@ -22,6 +42,10 @@ class ScanContext:
     symbol: Symbol
     features: DailyFeature
     price: Decimal | None  # latest close, read from daily_prices (not stored on DailyFeature)
+
+    @property
+    def scan_date(self) -> date:
+        return self.features.date
 
     def feature_snapshot(self) -> dict[str, object]:
         """A JSON-serializable snapshot of the inputs a scan decision was based on —

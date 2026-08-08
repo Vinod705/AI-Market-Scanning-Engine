@@ -5,10 +5,16 @@ httpx — no browser automation, no unofficial libraries. Every send goes
 through `_send_with_retry`, which centralizes timeout/retry/backoff/
 rate-limit handling so `send_message`/`send_template` stay simple.
 
-Credentials come from `Settings` (`TELEGRAM_*` env vars) and are never
-logged or included in `DeliveryResult.response_metadata` — the bot token
-lives only in the request URL, which is never captured in any log line or
-persisted field.
+One `TelegramProvider` instance is one bot. By default it reads the
+"default" bot's credentials (`Settings.telegram_bot_token`/`telegram_chat_id`)
+— but `bot_token`/`chat_id`/`channel_name` can be overridden at
+construction to stand up a second (or third) independent bot instance
+without any new class, which is how the IPO and F&O bots are built in
+`app/main.py` and routed to by `app/notifications/router.py`.
+
+Credentials are never logged or included in `DeliveryResult.response_metadata`
+— the bot token lives only in the request URL, which is never captured in
+any log line or persisted field.
 """
 
 import asyncio
@@ -29,10 +35,19 @@ _PERMANENT_ERROR_CODES = {400, 401, 403, 404}
 
 
 class TelegramProvider(NotificationProvider):
-    name = "telegram"
-
-    def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        client: httpx.AsyncClient | None = None,
+        *,
+        bot_token: str | None = None,
+        chat_id: str | None = None,
+        channel_name: str = "telegram",
+    ) -> None:
         self._settings = settings
+        self._bot_token = settings.telegram_bot_token if bot_token is None else bot_token
+        self._chat_id = settings.telegram_chat_id if chat_id is None else chat_id
+        self.name = channel_name
         # Reused across calls rather than opened per-request; also the seam
         # tests use to inject an `httpx.MockTransport` instead of hitting
         # the real Bot API. Connect and request timeouts are configured
@@ -47,8 +62,19 @@ class TelegramProvider(NotificationProvider):
         )
 
     @property
+    def configured(self) -> bool:
+        """Whether this specific bot has both a token and a chat id — each
+        `TelegramProvider` instance is independently configured, so the
+        default bot being set up says nothing about the IPO/F&O bots."""
+        return bool(self._bot_token and self._chat_id)
+
+    @property
+    def default_recipient(self) -> str:
+        return self._chat_id
+
+    @property
     def _base_url(self) -> str:
-        return f"{_API_BASE}/bot{self._settings.telegram_bot_token}"
+        return f"{_API_BASE}/bot{self._bot_token}"
 
     async def send_message(self, *, recipient: str, text: str) -> DeliveryResult:
         payload = {"chat_id": recipient, "text": text}
@@ -63,7 +89,7 @@ class TelegramProvider(NotificationProvider):
         return await self.send_message(recipient=recipient, text=text)
 
     async def health_check(self) -> bool:
-        if not self._settings.telegram_configured:
+        if not self.configured:
             return False
         try:
             response = await self._client.get(f"{self._base_url}/getMe")
@@ -74,11 +100,11 @@ class TelegramProvider(NotificationProvider):
     # --- internals -----------------------------------------------------
 
     async def _send_with_retry(self, payload: dict[str, Any]) -> DeliveryResult:
-        if not self._settings.telegram_configured:
+        if not self.configured:
             return DeliveryResult(
                 success=False,
                 status="FAILED",
-                error_message="Telegram is not configured",
+                error_message=f"Telegram ({self.name}) is not configured",
                 retryable=False,
             )
 

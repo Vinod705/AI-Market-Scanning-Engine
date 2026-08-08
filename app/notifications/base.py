@@ -30,6 +30,19 @@ class NotificationProvider(ABC):
 
     name: str
 
+    @property
+    @abstractmethod
+    def default_recipient(self) -> str:
+        """Who this provider's automated alerts go to — alerts don't carry
+        a per-message recipient, so every provider instance (a specific
+        Telegram bot's chat, an SMS distribution list, ...) needs to know
+        its own audience. `NotificationManager` uses this rather than
+        hardcoding a single recipient, which is what makes routing to
+        multiple independently-configured channels (see
+        `app/notifications/router.py`) possible without it knowing
+        anything provider-specific."""
+        raise NotImplementedError
+
     @abstractmethod
     async def send_message(self, *, recipient: str, text: str) -> DeliveryResult:
         """Send a free-form text message."""

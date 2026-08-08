@@ -19,6 +19,8 @@ async def test_health_returns_200_with_subsystem_statuses(client: AsyncClient) -
         "decision_engine",
         "alert_queue",
         "telegram",
+        "telegram_ipo",
+        "telegram_fno",
     ):
         assert key in body
 
@@ -33,3 +35,5 @@ async def test_health_reports_unavailable_components_without_lifespan(client: As
     assert body["scanner"] == "unavailable"
     assert body["alert_queue"] == "unavailable"
     assert body["telegram"] == "unavailable"
+    assert body["telegram_ipo"] == "unavailable"
+    assert body["telegram_fno"] == "unavailable"

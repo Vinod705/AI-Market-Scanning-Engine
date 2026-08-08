@@ -34,7 +34,8 @@ A production-grade AI Market Scanning Engine for the Indian stock market.
   `NotificationProvider` abstraction — `TelegramProvider` (official Telegram Bot
   API) is the current implementation — with retry/backoff, full delivery-status
   tracking, and restart recovery (pending/retrying alerts reload from PostgreSQL
-  rather than being resent or lost).
+  rather than being resent or lost). A `NotificationRouter` picks one of three
+  independently-configured Telegram bots (default/IPO/F&O) per alert.
 
 AI-driven analysis, a dashboard, and order placement are still out of scope — this is
 the data + feature + scanning + decision/alert layer everything above it will read from.
@@ -69,7 +70,8 @@ market-intelligence/
 │   ├── alerts/            Alert layer: base.py, deduplicator.py (fingerprinting),
 │   │                      throttler.py (cooldown), formatter.py (notification message text),
 │   │                      queue.py (AlertQueue), manager.py (AlertManager)
-│   ├── notifications/     NotificationProvider (ABC) + TelegramProvider + NotificationManager
+│   ├── notifications/     NotificationProvider (ABC) + TelegramProvider + NotificationRouter
+│   │                      (IPO/F&O/default bot selection) + NotificationManager
 │   │                      (the queue consumer/delivery worker)
 │   ├── schemas/           Pydantic request/response schemas
 │   ├── services/          market_service.py, feature_service.py, scanner_service.py,
@@ -215,7 +217,10 @@ AlertManager  →  AlertDeduplicator (fingerprint) + AlertThrottler (cooldown)
         ↓
 NotificationManager (queue consumer, runs forever)
         ↓
-NotificationProvider (ABC)  →  TelegramProvider (Telegram Bot API)
+NotificationRouter.resolve(alert_category)
+   ├── IPO_PRE_BREAKOUT / IPO_BREAKOUT / IPO_MOMENTUM   →  TelegramProvider (IPO bot)
+   ├── FNO_PRE_BREAKOUT / FNO_BREAKOUT / FNO_MOMENTUM   →  TelegramProvider (F&O bot)
+   └── anything else (e.g. breakout_v1, no alert_category)  →  TelegramProvider (default bot)
         ↓
 alert_delivery_logs + alert_events (full audit trail) + Alert.status (SENT/FAILED/RETRYING)
 ```
@@ -250,6 +255,14 @@ alert_delivery_logs + alert_events (full audit trail) + Alert.status (SENT/FAILE
   to the decision or alert layers — this is exactly how the Telegram provider replaced an
   earlier WhatsApp one without touching any of the layers above it. See
   [app/notifications/base.py](app/notifications/base.py).
+- **Two isolated Telegram bots for IPO and F&O alerts, routed deterministically.**
+  `NotificationRouter` ([app/notifications/router.py](app/notifications/router.py)) reads
+  `alert_category` off the alert's `feature_snapshot` and picks one of three independently
+  configured `TelegramProvider` instances — one bot's credentials never leak into
+  another's, and there is no fallback: an IPO alert whose IPO bot is down stays
+  `PENDING`/`RETRYING` on that channel rather than being rerouted to the F&O bot (or vice
+  versa). `breakout_v1` alerts predate the split and keep using the original default bot.
+  See `IPO_TELEGRAM_*`/`FNO_TELEGRAM_*` in [.env.example](.env.example).
 - **The queue is what keeps a slow Telegram API from blocking the scanner.**
   `AlertManager.process()` only ever awaits a fast in-memory `AlertQueue.put` — the actual
   HTTP call to Telegram happens later, off `NotificationManager`'s own consumer loop.
@@ -371,9 +384,13 @@ All configuration is environment-driven via `app/config/settings.py`
 [.env.example](.env.example) for the full list of variables (app, server, database,
 Redis, logging, scheduler, 5paisa, scanner, decision, alert, market session, Telegram).
 
-Telegram credentials (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) can be left blank in dev
-— alerts are still created, persisted, and queued normally; only the actual delivery
-attempt is skipped (logged, not sent) until `telegram_configured` is true.
+Telegram credentials (`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` for the default bot,
+`IPO_TELEGRAM_BOT_TOKEN`/`IPO_TELEGRAM_CHAT_ID` and `FNO_TELEGRAM_BOT_TOKEN`/
+`FNO_TELEGRAM_CHAT_ID` for the two candidate-alert bots) can each be left blank
+independently in dev — alerts are still created, persisted, and queued normally; only
+the actual delivery attempt on that specific channel is skipped (logged, not sent)
+until its own bot is configured. `GET /health` reports each bot's status separately
+(`telegram`, `telegram_ipo`, `telegram_fno`).
 
 ## What's next (out of scope for Phase 5)
 

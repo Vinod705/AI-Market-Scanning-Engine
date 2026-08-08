@@ -139,3 +139,71 @@ def test_market_session_passes_when_open() -> None:
 def test_market_session_warns_when_closed() -> None:
     result = check_market_session(_candidate(), _settings(), now=_MONDAY_AFTER_CLOSE)
     assert result.status == RuleStatus.WARNING
+
+
+# --- Phase 5 extension: rule generalization for the F&O/IPO candidate scanners ---
+# ema200 is deliberately absent from these snapshots — a recent IPO usually
+# doesn't have 200 days of history, and the candidate scanners don't
+# require it (see app.decision.rules.CANDIDATE_REQUIRED_FEATURE_KEYS).
+_CANDIDATE_SNAPSHOT: dict[str, object] = {
+    "price": "310",
+    "adx14": "28",
+    "relative_volume": "2.2",
+    "resistance_level": "300",
+}
+
+
+def _candidate_scanner_candidate(
+    *, scanner_name: str, score: float = 74.0, **snapshot_overrides: object
+) -> DecisionCandidate:
+    snapshot = {**_CANDIDATE_SNAPSHOT, **snapshot_overrides}
+    return DecisionCandidate(
+        symbol="NEWCO",
+        scanner_name=scanner_name,
+        signal_type="FNO_MOMENTUM",
+        score=score,
+        scan_date=date(2026, 1, 5),
+        feature_snapshot=snapshot,
+    )
+
+
+def test_required_features_does_not_require_ema200_for_candidate_scanners() -> None:
+    result = check_required_features(
+        _candidate_scanner_candidate(scanner_name="fno_momentum_v1"), _settings()
+    )
+    assert result.status == RuleStatus.PASS
+
+
+def test_required_features_still_requires_ema200_for_breakout_v1() -> None:
+    result = check_required_features(_candidate(ema200=None), _settings())
+    assert result.status == RuleStatus.FAIL
+
+
+def test_trend_is_not_applicable_for_candidate_scanners() -> None:
+    result = check_trend(_candidate_scanner_candidate(scanner_name="fno_momentum_v1"), _settings())
+    assert result.status == RuleStatus.PASS
+    assert "not applicable" in result.reason
+
+
+def test_resistance_proximity_not_applicable_for_momentum_scanner() -> None:
+    # price is far past resistance — would fail the proximity check if it
+    # applied, but fno_momentum_v1 candidates are past resistance by design.
+    result = check_resistance_proximity(
+        _candidate_scanner_candidate(
+            scanner_name="fno_momentum_v1", price="400", resistance_level="300"
+        ),
+        _settings(),
+    )
+    assert result.status == RuleStatus.PASS
+    assert "not applicable" in result.reason
+
+
+def test_resistance_proximity_still_applies_for_pre_breakout_scanner() -> None:
+    settings = Settings(decision_resistance_distance_percent=3.0)
+    result = check_resistance_proximity(
+        _candidate_scanner_candidate(
+            scanner_name="pre_breakout_v1", price="290", resistance_level="300"
+        ),
+        settings,
+    )
+    assert result.status == RuleStatus.FAIL  # ~3.3% away, just outside a 3% band
