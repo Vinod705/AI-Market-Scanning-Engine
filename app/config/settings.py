@@ -1,5 +1,6 @@
 """Application configuration loaded from environment variables."""
 
+from datetime import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -75,6 +76,10 @@ class Settings(BaseSettings):
     fivepaisa_retry_backoff_seconds: float = 2.0
     fivepaisa_rate_limit_per_sec: float = 5.0
 
+    # ~400 calendar days comfortably covers 200+ trading days (accounting for
+    # weekends/holidays), which downstream features like ema200 require.
+    fivepaisa_daily_history_days: int = 400
+
     # --- Feature engine ---
     # rs_vs_nifty stays null until a symbol with this name exists in `symbols`
     # — the 5paisa scrip master (filtered to NSE cash-segment equities) does
@@ -98,6 +103,37 @@ class Settings(BaseSettings):
     scanner_score_weight_volatility: float = 0.10
     scanner_score_weight_relative_strength: float = 0.10
     scanner_score_weight_support_resistance: float = 0.15
+
+    # --- Decision engine: Decision Rules v1 thresholds ---
+    decision_min_alert_score: float = 80.0
+    decision_min_rvol: float = 2.0
+    decision_min_adx: float = 25.0
+    decision_resistance_distance_percent: float = 3.0
+    # How old a scanner result's underlying feature date may be before the
+    # "market data freshness" rule rejects it as stale.
+    decision_max_data_age_days: int = 1
+
+    # --- Alert manager ---
+    alert_cooldown_minutes: int = 30
+    alert_high_priority_score: float = 90.0
+    alert_expiry_minutes: int = 240
+    alert_max_retries: int = 3
+    alert_retry_delay_seconds: float = 5.0
+
+    # --- Market session (reused by the decision engine's session-validity rule;
+    # MarketStatusUpdater.is_market_open() reads these instead of hardcoding NSE hours) ---
+    market_timezone: str = "Asia/Kolkata"
+    market_open_time: time = time(9, 15)
+    market_close_time: time = time(15, 30)
+
+    # --- WhatsApp Business (Cloud API) notification provider ---
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_recipient_id: str = ""
+    whatsapp_api_version: str = "v21.0"
+    whatsapp_request_timeout: float = 15.0
+    whatsapp_max_retries: int = 3
+    whatsapp_retry_backoff_seconds: float = 2.0
 
     @field_validator("log_dir", mode="before")
     @classmethod
@@ -135,6 +171,15 @@ class Settings(BaseSettings):
             and self.fivepaisa_client_code
             and self.fivepaisa_pin
             and self.fivepaisa_totp_secret
+        )
+
+    @property
+    def whatsapp_configured(self) -> bool:
+        """Whether enough WhatsApp Cloud API credentials are present to send messages."""
+        return bool(
+            self.whatsapp_access_token
+            and self.whatsapp_phone_number_id
+            and self.whatsapp_recipient_id
         )
 
     @property

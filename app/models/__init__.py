@@ -1,5 +1,8 @@
 """SQLAlchemy ORM models. Imported here so Alembic autogenerate sees them."""
 
+from app.models.alert import Alert
+from app.models.alert_delivery_log import AlertDeliveryLog
+from app.models.alert_event import AlertEvent
 from app.models.collector_log import CollectorLog
 from app.models.daily_feature import DailyFeature
 from app.models.daily_price import DailyPrice
@@ -12,6 +15,9 @@ from app.models.session_feature import SessionFeature
 from app.models.symbol import Symbol
 
 __all__ = [
+    "Alert",
+    "AlertDeliveryLog",
+    "AlertEvent",
     "CollectorLog",
     "DailyFeature",
     "DailyPrice",

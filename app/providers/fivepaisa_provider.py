@@ -170,7 +170,11 @@ class FivePaisaProvider(MarketDataProvider):
         return await self._get_candles(symbol, timeframe="1m", lookback=timedelta(days=1))
 
     async def get_daily(self, symbol: str) -> list[Candle]:
-        return await self._get_candles(symbol, timeframe="1d", lookback=timedelta(days=100))
+        return await self._get_candles(
+            symbol,
+            timeframe="1d",
+            lookback=timedelta(days=self._settings.fivepaisa_daily_history_days),
+        )
 
     # --- internals -----------------------------------------------------
 
