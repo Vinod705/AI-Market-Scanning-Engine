@@ -2,9 +2,10 @@
 
 Owns the "no duplicate alert" and "cooldown" guarantees: every ALERT-grade
 decision passes through dedup and cooldown checks here before a row is
-ever created. Never talks to WhatsApp directly — `process()` only ever
-awaits a fast in-memory queue `put`, so a slow/unavailable notification
-provider can never block this (or the scanner/decision engine upstream of it).
+ever created. Never talks to the notification provider directly —
+`process()` only ever awaits a fast in-memory queue `put`, so a
+slow/unavailable provider can never block this (or the scanner/decision
+engine upstream of it).
 """
 
 from datetime import datetime, timedelta

@@ -126,14 +126,13 @@ class Settings(BaseSettings):
     market_open_time: time = time(9, 15)
     market_close_time: time = time(15, 30)
 
-    # --- WhatsApp Business (Cloud API) notification provider ---
-    whatsapp_access_token: str = ""
-    whatsapp_phone_number_id: str = ""
-    whatsapp_recipient_id: str = ""
-    whatsapp_api_version: str = "v21.0"
-    whatsapp_request_timeout: float = 15.0
-    whatsapp_max_retries: int = 3
-    whatsapp_retry_backoff_seconds: float = 2.0
+    # --- Telegram Bot API notification provider ---
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_connect_timeout: float = 10.0
+    telegram_request_timeout: float = 15.0
+    telegram_max_retries: int = 3
+    telegram_retry_backoff_seconds: float = 2.0
 
     @field_validator("log_dir", mode="before")
     @classmethod
@@ -174,13 +173,9 @@ class Settings(BaseSettings):
         )
 
     @property
-    def whatsapp_configured(self) -> bool:
-        """Whether enough WhatsApp Cloud API credentials are present to send messages."""
-        return bool(
-            self.whatsapp_access_token
-            and self.whatsapp_phone_number_id
-            and self.whatsapp_recipient_id
-        )
+    def telegram_configured(self) -> bool:
+        """Whether enough Telegram Bot API credentials are present to send messages."""
+        return bool(self.telegram_bot_token and self.telegram_chat_id)
 
     @property
     def fivepaisa_cred(self) -> dict[str, str]:

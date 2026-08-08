@@ -178,14 +178,14 @@ async def test_alert_delivery_log_repository(
         log_repo = AlertDeliveryLogRepository(session)
         await log_repo.log_attempt(
             alert_id=alert.id,
-            provider="whatsapp",
+            provider="telegram",
             status="FAILED",
             attempt_number=1,
             error_message="timeout",
         )
         await log_repo.log_attempt(
             alert_id=alert.id,
-            provider="whatsapp",
+            provider="telegram",
             status="SENT",
             attempt_number=2,
             response_metadata={"status_code": 200},

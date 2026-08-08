@@ -1,5 +1,5 @@
 """AlertQueue: in-memory async handoff between the Alert Manager and the
-WhatsApp/notification worker.
+notification worker.
 
 This is the mechanism that keeps a slow or unavailable notification
 provider from ever blocking the scanner or decision engine: `AlertManager`

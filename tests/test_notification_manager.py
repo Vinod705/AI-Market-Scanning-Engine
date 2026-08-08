@@ -79,7 +79,7 @@ async def _seed_alert(
 
 def _settings(**overrides: object) -> Settings:
     defaults: dict[str, object] = dict(
-        whatsapp_recipient_id="919999999999", alert_max_retries=3, alert_retry_delay_seconds=0.01
+        telegram_chat_id="123456789", alert_max_retries=3, alert_retry_delay_seconds=0.01
     )
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]

@@ -11,9 +11,9 @@ from app.database.base import Base
 class AlertDeliveryLog(Base):
     """One send attempt for one alert, against one notification provider.
 
-    `response_metadata` must never contain secrets (access tokens, API
-    keys) — only whatever the provider considers safe response data
-    (message id, status, error code). See `app/notifications/whatsapp.py`.
+    `response_metadata` must never contain secrets (bot tokens, API keys)
+    — only whatever the provider considers safe response data (message id,
+    status, error code). See `app/notifications/telegram.py`.
     """
 
     __tablename__ = "alert_delivery_logs"

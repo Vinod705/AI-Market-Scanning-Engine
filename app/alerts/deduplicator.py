@@ -3,7 +3,7 @@
 The scanner runs every minute, so the same stock's same setup would
 otherwise generate a decision every single tick. The fingerprint collapses
 all of those into one identity; `check()` is what actually prevents a
-second WhatsApp send for a signal that's still active.
+second notification send for a signal that's still active.
 """
 
 import hashlib

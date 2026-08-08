@@ -1,10 +1,9 @@
-"""AlertMessageFormatter: builds the WhatsApp notification text.
+"""AlertMessageFormatter: builds the notification text.
 
-Kept separate from `app/notifications/whatsapp.py` on purpose — formatting
-is provider-agnostic (a future SMS/email provider would reuse it), and the
-WhatsApp Business API's template-message rules mean *how* this text gets
-delivered (free-form session message vs. an approved template) is a
-provider concern, not a formatting one.
+Kept separate from `app/notifications/telegram.py` on purpose — formatting
+is provider-agnostic (any future provider — Telegram today, SMS/email
+tomorrow — would reuse it), and *how* the text gets delivered (a plain
+message vs. an approved template) is a provider concern, not a formatting one.
 
 Only ever renders values that are actually present on the alert. Never
 invents entry/stop-loss/target prices, and never claims the score is a

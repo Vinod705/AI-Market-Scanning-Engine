@@ -31,10 +31,10 @@ A production-grade AI Market Scanning Engine for the Indian stock market.
   persistence) into an in-memory `AlertQueue`, decoupling alert creation from
   delivery so a slow/unavailable notification provider never blocks the scanner.
   A `NotificationManager` worker consumes the queue and sends via a
-  `NotificationProvider` abstraction — `WhatsAppProvider` (official WhatsApp
-  Business Cloud API) is the first implementation — with retry/backoff, full
-  delivery-status tracking, and restart recovery (pending/retrying alerts reload
-  from PostgreSQL rather than being resent or lost).
+  `NotificationProvider` abstraction — `TelegramProvider` (official Telegram Bot
+  API) is the current implementation — with retry/backoff, full delivery-status
+  tracking, and restart recovery (pending/retrying alerts reload from PostgreSQL
+  rather than being resent or lost).
 
 AI-driven analysis, a dashboard, and order placement are still out of scope — this is
 the data + feature + scanning + decision/alert layer everything above it will read from.
@@ -67,9 +67,9 @@ market-intelligence/
 │   ├── decision/          Decision engine: models.py (Decision/Quality/RuleResult),
 │   │                      rules.py (Decision Rules v1), validator.py, evaluator.py, engine.py
 │   ├── alerts/            Alert layer: base.py, deduplicator.py (fingerprinting),
-│   │                      throttler.py (cooldown), formatter.py (WhatsApp message text),
+│   │                      throttler.py (cooldown), formatter.py (notification message text),
 │   │                      queue.py (AlertQueue), manager.py (AlertManager)
-│   ├── notifications/     NotificationProvider (ABC) + WhatsAppProvider + NotificationManager
+│   ├── notifications/     NotificationProvider (ABC) + TelegramProvider + NotificationManager
 │   │                      (the queue consumer/delivery worker)
 │   ├── schemas/           Pydantic request/response schemas
 │   ├── services/          market_service.py, feature_service.py, scanner_service.py,
@@ -215,7 +215,7 @@ AlertManager  →  AlertDeduplicator (fingerprint) + AlertThrottler (cooldown)
         ↓
 NotificationManager (queue consumer, runs forever)
         ↓
-NotificationProvider (ABC)  →  WhatsAppProvider (WhatsApp Business Cloud API)
+NotificationProvider (ABC)  →  TelegramProvider (Telegram Bot API)
         ↓
 alert_delivery_logs + alert_events (full audit trail) + Alert.status (SENT/FAILED/RETRYING)
 ```
@@ -245,30 +245,32 @@ alert_delivery_logs + alert_events (full audit trail) + Alert.status (SENT/FAILE
   re-notify too soon after the last one. Both suppressions are logged as `SUPPRESSED`
   `alert_events` against the blocking alert.
 - **The notification provider is a swappable abstraction.** `AlertManager` and
-  `DecisionEngine` depend on `NotificationProvider` (an ABC), never on WhatsApp directly.
-  Adding a second channel (SMS, email, Telegram) means a new provider class, not a change
-  to the decision or alert layers. See [app/notifications/base.py](app/notifications/base.py).
-- **The queue is what keeps a slow WhatsApp from blocking the scanner.**
+  `DecisionEngine` depend on `NotificationProvider` (an ABC), never on Telegram directly.
+  Adding a second channel (SMS, email, WhatsApp) means a new provider class, not a change
+  to the decision or alert layers — this is exactly how the Telegram provider replaced an
+  earlier WhatsApp one without touching any of the layers above it. See
+  [app/notifications/base.py](app/notifications/base.py).
+- **The queue is what keeps a slow Telegram API from blocking the scanner.**
   `AlertManager.process()` only ever awaits a fast in-memory `AlertQueue.put` — the actual
-  HTTP call to WhatsApp happens later, off `NotificationManager`'s own consumer loop.
-  `WhatsAppProvider` retries transient failures (timeouts, 429 rate limits, 5xx) with
-  exponential backoff up to `WHATSAPP_MAX_RETRIES`, and treats other 4xx responses as
-  permanent failures it doesn't retry.
+  HTTP call to Telegram happens later, off `NotificationManager`'s own consumer loop.
+  `TelegramProvider` retries transient failures (timeouts, 429 rate limits, 5xx) with
+  exponential backoff up to `TELEGRAM_MAX_RETRIES`, and treats other 4xx responses (bad
+  chat id, unauthorized bot token, etc.) as permanent failures it doesn't retry.
 - **Restart recovery, not resend.** On startup, `NotificationManager.recover_pending()`
   reloads every `PENDING`/`RETRYING` alert from PostgreSQL and redrives delivery —
   `deliver_now` checks `Alert.status` first, so anything already `SENT` is never resent.
   The in-memory `AlertQueue` itself is not persisted; PostgreSQL is the source of truth
   it's rebuilt from after a restart.
-- **Never invents trading levels.** The WhatsApp message (`app/alerts/formatter.py`) only
-  renders values actually present in the alert's `feature_snapshot`/`breakout_level` —
-  no synthesized entry/stop-loss/target prices, and any missing field is omitted rather
+- **Never invents trading levels.** The notification message (`app/alerts/formatter.py`)
+  only renders values actually present in the alert's `feature_snapshot`/`breakout_level`
+  — no synthesized entry/stop-loss/target prices, and any missing field is omitted rather
   than guessed.
 
 ## API endpoints
 
 | Endpoint | Description |
 |---|---|
-| `GET /health` | App-level liveness, plus per-subsystem status (database, market_data, feature_engine, scanner, decision_engine, alert_queue, whatsapp) |
+| `GET /health` | App-level liveness, plus per-subsystem status (database, market_data, feature_engine, scanner, decision_engine, alert_queue, telegram) |
 | `GET /market/health` | Market module liveness |
 | `GET /market/status` | `market_open`, `provider_connected`, `last_update/success/failure` |
 | `GET /market/symbols` | Active symbols from the local symbol master |
@@ -358,7 +360,7 @@ ruff check app tests   # lint
 mypy                   # type-check (config in pyproject.toml)
 ```
 
-WhatsApp delivery is tested against `httpx.MockTransport` (`tests/test_whatsapp_provider.py`)
+Telegram delivery is tested against `httpx.MockTransport` (`tests/test_telegram_provider.py`)
 — no live credentials or network calls are needed to run the suite, including the
 timeout/rate-limit/permanent-failure/retry-exhaustion scenarios.
 
@@ -367,15 +369,14 @@ timeout/rate-limit/permanent-failure/retry-exhaustion scenarios.
 All configuration is environment-driven via `app/config/settings.py`
 (`pydantic-settings`), sourced from a `.env` file or real environment variables. See
 [.env.example](.env.example) for the full list of variables (app, server, database,
-Redis, logging, scheduler, 5paisa, scanner, decision, alert, market session, WhatsApp).
+Redis, logging, scheduler, 5paisa, scanner, decision, alert, market session, Telegram).
 
-WhatsApp credentials (`WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
-`WHATSAPP_RECIPIENT_ID`) can be left blank in dev — alerts are still created, persisted,
-and queued normally; only the actual delivery attempt is skipped (logged, not sent)
-until `whatsapp_configured` is true.
+Telegram credentials (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) can be left blank in dev
+— alerts are still created, persisted, and queued normally; only the actual delivery
+attempt is skipped (logged, not sent) until `telegram_configured` is true.
 
 ## What's next (out of scope for Phase 5)
 
 Additional scanners (VCP, Momentum, ORB, IPO), a dashboard, AI-driven analysis, and
 order placement are deliberately not implemented yet — this phase is the Decision &
-Alert Engine v1 (WhatsApp only) sitting on top of the existing Breakout Scanner v1.
+Alert Engine v1 (Telegram only) sitting on top of the existing Breakout Scanner v1.

@@ -24,7 +24,7 @@ from app.database.session import AsyncSessionLocal, check_database_connection, d
 from app.decision.engine import DecisionEngine
 from app.features.engine import FeatureEngine
 from app.notifications.manager import NotificationManager
-from app.notifications.whatsapp import WhatsAppProvider
+from app.notifications.telegram import TelegramProvider
 from app.providers.base_provider import ProviderError
 from app.providers.fivepaisa_provider import FivePaisaProvider
 from app.scanner.breakout_scanner import BreakoutScanner
@@ -73,14 +73,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     alert_manager = AlertManager(AsyncSessionLocal, settings, alert_queue)
     decision_engine = DecisionEngine(AsyncSessionLocal, settings, alert_manager)
 
-    whatsapp_provider = WhatsAppProvider(settings)
-    if not settings.whatsapp_configured:
+    telegram_provider = TelegramProvider(settings)
+    if not settings.telegram_configured:
         logger.warning(
-            "WhatsApp credentials not configured — alerts will be created and queued, "
+            "Telegram credentials not configured — alerts will be created and queued, "
             "but delivery attempts will fail until they are"
         )
     notification_manager = NotificationManager(
-        AsyncSessionLocal, settings, alert_queue, whatsapp_provider
+        AsyncSessionLocal, settings, alert_queue, telegram_provider
     )
 
     scheduler_service = get_scheduler_service(settings)
@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.provider = provider
     app.state.scheduler_service = scheduler_service
     app.state.alert_queue = alert_queue
-    app.state.whatsapp_provider = whatsapp_provider
+    app.state.telegram_provider = telegram_provider
     app.state.settings = settings
 
     yield

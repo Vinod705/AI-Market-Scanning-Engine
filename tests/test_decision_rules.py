@@ -61,7 +61,9 @@ def test_required_features_fails_when_missing() -> None:
 
 
 def test_data_freshness_passes_for_today() -> None:
-    result = check_data_freshness(_candidate(scan_date=date(2026, 1, 5)), _settings(), now=_MONDAY_MARKET_OPEN)
+    result = check_data_freshness(
+        _candidate(scan_date=date(2026, 1, 5)), _settings(), now=_MONDAY_MARKET_OPEN
+    )
     assert result.status == RuleStatus.PASS
 
 

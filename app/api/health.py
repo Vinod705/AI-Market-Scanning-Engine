@@ -36,14 +36,14 @@ async def health_check(request: Request) -> HealthResponse:
     alert_queue = getattr(state, "alert_queue", None)
     alert_queue_status = "healthy" if alert_queue is not None else "unavailable"
 
-    whatsapp_provider = getattr(state, "whatsapp_provider", None)
+    telegram_provider = getattr(state, "telegram_provider", None)
     settings = getattr(state, "settings", None)
-    if whatsapp_provider is None or settings is None:
-        whatsapp = "unavailable"
-    elif not settings.whatsapp_configured:
-        whatsapp = "not_configured"
+    if telegram_provider is None or settings is None:
+        telegram = "unavailable"
+    elif not settings.telegram_configured:
+        telegram = "not_configured"
     else:
-        whatsapp = "healthy" if await whatsapp_provider.health_check() else "unhealthy"
+        telegram = "healthy" if await telegram_provider.health_check() else "unhealthy"
 
     return HealthResponse(
         status="healthy" if database == "healthy" else "degraded",
@@ -53,5 +53,5 @@ async def health_check(request: Request) -> HealthResponse:
         scanner=scheduler_status,
         decision_engine=scheduler_status,
         alert_queue=alert_queue_status,
-        whatsapp=whatsapp,
+        telegram=telegram,
     )

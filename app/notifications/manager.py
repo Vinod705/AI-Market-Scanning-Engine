@@ -98,7 +98,7 @@ class NotificationManager:
                 max=self._settings.alert_max_retries,
             )
             result = await self._provider.send_message(
-                recipient=self._settings.whatsapp_recipient_id, text=text
+                recipient=self._settings.telegram_chat_id, text=text
             )
 
             async with self._session_factory() as session:

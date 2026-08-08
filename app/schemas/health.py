@@ -11,4 +11,4 @@ class HealthResponse(BaseModel):
     scanner: str = "unknown"
     decision_engine: str = "unknown"
     alert_queue: str = "unknown"
-    whatsapp: str = "unknown"
+    telegram: str = "unknown"

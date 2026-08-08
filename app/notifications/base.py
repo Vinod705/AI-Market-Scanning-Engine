@@ -2,8 +2,8 @@
 of any specific channel.
 
 `AlertManager`/`NotificationManager` only ever talk to this interface —
-`WhatsAppProvider` is the first implementation, but a future SMS/email/
-Telegram provider is a new class here, not a change to the decision or
+`TelegramProvider` is the current implementation, but a future SMS/email/
+WhatsApp provider is a new class here, not a change to the decision or
 alert engine.
 """
 
@@ -40,7 +40,9 @@ class NotificationProvider(ABC):
         self, *, recipient: str, template_name: str, language: str, parameters: list[str]
     ) -> DeliveryResult:
         """Send a pre-approved template message — required by some channels
-        (e.g. WhatsApp, outside a 24h customer-service window)."""
+        (e.g. WhatsApp Business, outside a 24h customer-service window).
+        Providers without a template concept (e.g. Telegram) may implement
+        this as a formatted `send_message` call."""
         raise NotImplementedError
 
     @abstractmethod
