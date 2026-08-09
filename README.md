@@ -300,6 +300,35 @@ alert_delivery_logs + alert_events (full audit trail) + Alert.status (SENT/FAILE
 | `GET /alerts/status` | Total/sent/pending/failed alert counts, last alert time |
 | `GET /alerts/{id}` | One alert's full record (score, quality, levels, status, fingerprint) |
 | `GET /decisions/{symbol}` | Live Decision Engine re-evaluation of the symbol's latest scanner result, with the full rule-by-rule breakdown |
+| `GET /candidates?universe=&alert_category=&status=&limit=` | IPO/F&O candidate list (auth required) |
+| `GET /candidates/{symbol}/explain` | Full explainability breakdown for one candidate — scores, factor-level breakdowns, WHY narrative (auth required) |
+| `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/change-password` | Dashboard authentication |
+| `GET/POST/PATCH/DELETE /admin/users/*` | Admin-only user management |
+| `GET /dashboard` | The dashboard itself (static page; login gate is client-side, real access control is on the API above) |
+
+## Dashboard, auth, and the F&O/IPO explainability API (Phase 6)
+
+```
+Browser
+   │  HTTPS (nginx, self-signed cert — see "HTTPS / nginx" below)
+   ▼
+GET /dashboard  →  app/web/dashboard.html (vanilla JS, no build step)
+   │
+   ├── POST /auth/login  →  UserService.authenticate() → SessionStore (Redis) → Set-Cookie: session_id
+   ├── GET  /candidates, /candidates/{symbol}/explain  →  CandidateService  →  app.candidates.explainer
+   └── ADMIN only: /admin/users/*  →  UserService (create/disable/enable/reset-password/delete)
+```
+
+- **Every score is traceable, never a black box.** `GET /candidates/{symbol}/explain` returns the Fundamental/Technical/Overall scores broken down by category (`Trend: 24.17/25`, ...) down to individual factors — each with its actual value, normalized sub-score, weight, contribution, and a plain-English reason — plus a deterministic WHY THIS STOCK / WHY NOW / WHAT CONFIRMS / WHAT HAS NOT BEEN CONFIRMED / RISKS narrative (`app/candidates/explainer.py`). None of this is AI-generated — it's a direct read of what `app.fundamentals.scorer`/`app.technical.scorer`/the Decision Engine already computed, just formatted. When the Fundamental Score is UNKNOWN, the Overall Score's breakdown explicitly says so rather than silently treating it as 0% weighted.
+- **Sessions live in Redis, not as self-contained JWTs** (`app/auth/session_store.py`) — real logout and server-side expiry/revocation need a session record the server can delete on demand.
+- **Passwords are bcrypt-hashed** (`app/auth/passwords.py`) and never logged; the shared request-logging middleware only ever logs method/path/status/duration.
+- **Two roles, enforced server-side.** `require_admin` (`app/auth/dependencies.py`) gates every `/admin/users/*` route; a VIEWER gets a 403, not a degraded UI. `/candidates*`, `/alerts*`, `/decisions/*` require *any* logged-in session — an anonymous internet visitor gets 401, not the data.
+- **The initial admin is never hardcoded.** `scripts/create_admin.py` is a one-off, manually-run bootstrap (`docker compose exec app python -m scripts.create_admin --email ... --name ...`) that prints a one-time password exactly once and forces a password change on first login.
+- **`/health` stays unauthenticated on purpose** — it's the Docker healthcheck target; liveness probes are conventionally public in virtually every production system.
+
+### HTTPS / nginx
+
+The app itself is plain HTTP on `:8000`; nginx terminates TLS in front of it (self-signed cert, since the deployment doesn't have a domain name — Let's Encrypt can't issue a certificate for a bare IP). Config: `/etc/nginx/sites-available/market-intel.conf` on the VM, cert at `/etc/nginx/ssl/market-intel-selfsigned.crt`. `SESSION_COOKIE_SECURE=true` (the default) means dashboard login only works over HTTPS — a real browser won't send a `Secure` cookie back over plain HTTP.
 
 ## Running with Docker (recommended)
 

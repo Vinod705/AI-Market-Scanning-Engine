@@ -15,3 +15,4 @@ pandas==2.2.3
 pyotp==2.9.0
 py5paisa==0.7.21.2
 httpx==0.28.1
+bcrypt==4.2.1

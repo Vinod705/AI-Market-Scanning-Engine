@@ -189,6 +189,7 @@ async def build_candidate(
         passed_rules=[],
         failed_rules=[],
         data_completeness_pct=fundamental_result.data_completeness_pct,
+        technical_data_completeness_pct=technical_result.data_completeness_pct,
         setup_state=setup_state,
         alert_category=None,
         reason="",

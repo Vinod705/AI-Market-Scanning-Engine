@@ -10,11 +10,16 @@ from loguru import logger
 
 from app.alerts.manager import AlertManager
 from app.alerts.queue import AlertQueue
+from app.api.admin_users import router as admin_users_router
 from app.api.alerts import router as alerts_router
+from app.api.auth import router as auth_router
+from app.api.candidates import router as candidates_router
+from app.api.dashboard import router as dashboard_router
 from app.api.features import router as features_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
 from app.api.scanner import router as scanner_router
+from app.auth.redis_client import check_redis_connection, dispose_redis
 from app.candidates.fno_momentum_scanner import FnoMomentumScanner
 from app.candidates.ipo_intraday_scanner import IpoIntradayScanner
 from app.candidates.pre_breakout_scanner import PreBreakoutScanner
@@ -55,6 +60,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Database connection verified")
     except Exception:
         logger.warning("Database not reachable at startup — continuing, will retry per-request")
+
+    try:
+        await check_redis_connection()
+        logger.info("Redis connection verified (session store)")
+    except Exception:
+        logger.warning("Redis not reachable at startup — dashboard login will fail until it is")
 
     provider = FivePaisaProvider(settings)
     if settings.fivepaisa_configured:
@@ -157,6 +168,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await notification_worker
     await provider.disconnect()
     await dispose_engine()
+    await dispose_redis()
     logger.info("Shutdown complete")
 
 
@@ -178,6 +190,10 @@ def create_app() -> FastAPI:
     app.include_router(features_router)
     app.include_router(scanner_router)
     app.include_router(alerts_router)
+    app.include_router(candidates_router)
+    app.include_router(auth_router)
+    app.include_router(admin_users_router)
+    app.include_router(dashboard_router)
 
     return app
 

@@ -14,6 +14,7 @@ from app.models.scanner_result import ScannerResult
 from app.models.scanner_run import ScannerRun
 from app.models.session_feature import SessionFeature
 from app.models.symbol import Symbol
+from app.models.user import User
 
 __all__ = [
     "Alert",
@@ -30,4 +31,5 @@ __all__ = [
     "ScannerRun",
     "SessionFeature",
     "Symbol",
+    "User",
 ]

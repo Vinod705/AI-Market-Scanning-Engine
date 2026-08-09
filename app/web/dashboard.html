@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>market-intelligence dashboard</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #161a21; --panel2: #1d222b; --border: #2a2f3a;
+    --text: #e6e8eb; --muted: #93a0b4; --accent: #4f8cff;
+    --good: #35c76a; --bad: #ef5361; --warn: #e8b13a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 14px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .who { color: var(--muted); font-size: 13px; }
+  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
+  button.secondary { background: var(--panel2); border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: var(--bad); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input, select { background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 9px; font-size: 13px; }
+  a.tab { color: var(--muted); text-decoration: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+  a.tab.active { color: var(--text); background: var(--panel2); }
+  main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+  .hidden { display: none !important; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: var(--panel2); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill-good { background: rgba(53,199,106,.15); color: var(--good); }
+  .pill-bad { background: rgba(239,83,97,.15); color: var(--bad); }
+  .pill-warn { background: rgba(232,177,58,.15); color: var(--warn); }
+  .pill-neutral { background: rgba(147,160,180,.15); color: var(--muted); }
+  .score-big { font-size: 28px; font-weight: 700; }
+  .score-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .score-box { flex: 1; min-width: 140px; }
+  .score-box .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .bar { height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; margin-top: 6px; }
+  .bar > div { height: 100%; background: var(--accent); }
+  .factor-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+  .factor-row:last-child { border-bottom: none; }
+  .factor-name { display: flex; gap: 8px; align-items: baseline; }
+  .why-block { margin-bottom: 10px; }
+  .why-block .q { color: var(--accent); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .why-block .a { margin-top: 2px; }
+  ul.plain { margin: 4px 0 0 0; padding-left: 18px; }
+  .error { color: var(--bad); font-size: 13px; margin-top: 8px; }
+  .muted { color: var(--muted); }
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: 380px; }
+  .modal h3 { margin-top: 0; }
+  .modal .row { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .banner { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; }
+  #login-view { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .login-card { width: 320px; }
+  .login-card .row { margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .login-card input { width: 100%; }
+  code.tp { background: var(--panel2); padding: 6px 8px; border-radius: 6px; display: inline-block; margin-top: 6px; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<div id="login-view" class="hidden">
+  <div class="card login-card">
+    <h3>market-intelligence</h3>
+    <div class="row"><label class="muted">Email</label><input id="login-email" type="text" autocomplete="username" /></div>
+    <div class="row"><label class="muted">Password</label><input id="login-password" type="password" autocomplete="current-password" /></div>
+    <button id="login-submit" style="width:100%">Log in</button>
+    <div id="login-error" class="error hidden"></div>
+  </div>
+</div>
+
+<div id="app-view" class="hidden">
+  <header>
+    <h1>market-intelligence <span class="muted" style="font-weight:400">— read-only</span></h1>
+    <div style="display:flex; align-items:center; gap:14px;">
+      <span class="who"><span id="who-name"></span> · <span id="who-role"></span></span>
+      <button class="secondary" id="change-password-btn">Change password</button>
+      <button class="secondary" id="logout-btn">Log out</button>
+    </div>
+  </header>
+  <main>
+    <div class="toolbar">
+      <a class="tab active" data-tab="candidates">Candidates</a>
+      <a class="tab hidden" id="admin-tab" data-tab="admin">Admin &rarr; Users</a>
+    </div>
+
+    <section id="tab-candidates">
+      <div class="card">
+        <div class="toolbar">
+          <select id="filter-universe">
+            <option value="">All universes</option>
+            <option value="IPO">IPO</option>
+            <option value="FNO">F&amp;O</option>
+          </select>
+          <select id="filter-status">
+            <option value="qualified">Qualified</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <button class="secondary" id="refresh-candidates">Refresh</button>
+          <span class="muted" id="candidates-count"></span>
+        </div>
+        <table>
+          <thead><tr><th>Symbol</th><th>Universe</th><th>Category</th><th>Setup</th><th>Overall</th><th>Technical</th><th>Fundamental</th><th>Quality</th><th>Date</th></tr></thead>
+          <tbody id="candidates-body"></tbody>
+        </table>
+      </div>
+      <div id="detail-panel"></div>
+    </section>
+
+    <section id="tab-admin" class="hidden">
+      <div class="card">
+        <div class="toolbar">
+          <button id="add-user-btn">Add user</button>
+        </div>
+        <table>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Last login</th><th>Actions</th></tr></thead>
+          <tbody id="users-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+
+<script>
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+async function api(path, opts) {
+  const res = await fetch(path, Object.assign({ credentials: "include", headers: { "Content-Type": "application/json" } }, opts || {}));
+  if (res.status === 204) return null;
+  let body = null;
+  try { body = await res.json(); } catch (e) { body = null; }
+  if (!res.ok) {
+    const detail = (body && body.detail) ? body.detail : ("Request failed (" + res.status + ")");
+    const err = new Error(detail);
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function pill(status) {
+  const map = { POSITIVE: "pill-good", NEGATIVE: "pill-bad", UNKNOWN: "pill-neutral", PASS: "pill-good", FAIL: "pill-bad", WARNING: "pill-warn", ACTIVE: "pill-good", DISABLED: "pill-bad" };
+  const cls = map[status] || "pill-neutral";
+  return `<span class="pill ${cls}">${status}</span>`;
+}
+
+// ---------------- Auth / shell ----------------
+
+let currentUser = null;
+
+async function boot() {
+  try {
+    currentUser = await api("/auth/me");
+    showApp();
+  } catch (e) {
+    showLogin();
+  }
+}
+
+function showLogin(message) {
+  $("#login-view").classList.remove("hidden");
+  $("#app-view").classList.add("hidden");
+  if (message) {
+    $("#login-error").textContent = message;
+    $("#login-error").classList.remove("hidden");
+  }
+}
+
+function showApp() {
+  $("#login-view").classList.add("hidden");
+  $("#app-view").classList.remove("hidden");
+  $("#who-name").textContent = currentUser.name;
+  $("#who-role").textContent = currentUser.role;
+  if (currentUser.role === "ADMIN") $("#admin-tab").classList.remove("hidden");
+  else $("#admin-tab").classList.add("hidden");
+  loadCandidates();
+}
+
+$("#login-submit").addEventListener("click", async () => {
+  $("#login-error").classList.add("hidden");
+  const email = $("#login-email").value.trim();
+  const password = $("#login-password").value;
+  try {
+    const resp = await api("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    currentUser = resp.user;
+    if (currentUser.must_change_password) {
+      openChangePasswordModal(true);
+    }
+    showApp();
+  } catch (e) {
+    showLogin(e.message);
+  }
+});
+$("#login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#login-submit").click(); });
+
+$("#logout-btn").addEventListener("click", async () => {
+  try { await api("/auth/logout", { method: "POST" }); } catch (e) {}
+  currentUser = null;
+  showLogin();
+});
+
+$$(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    $$(".tab").forEach((t) => t.classList.remove("active"));
+    tab.classList.add("active");
+    const name = tab.dataset.tab;
+    $("#tab-candidates").classList.toggle("hidden", name !== "candidates");
+    $("#tab-admin").classList.toggle("hidden", name !== "admin");
+    if (name === "admin") loadUsers();
+  });
+});
+
+// ---------------- Candidates + explainability ----------------
+
+async function loadCandidates() {
+  const universe = $("#filter-universe").value;
+  const status = $("#filter-status").value;
+  const params = new URLSearchParams();
+  if (universe) params.set("universe", universe);
+  params.set("status", status);
+  const rows = await api("/candidates?" + params.toString());
+  $("#candidates-count").textContent = rows.length + " candidate(s)";
+  const body = $("#candidates-body");
+  body.innerHTML = "";
+  rows.forEach((c) => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable";
+    tr.innerHTML = `<td>${c.symbol}</td><td>${c.universe}</td><td>${c.alert_category || "—"}</td>
+      <td>${c.setup_state || "—"}</td><td>${c.overall_score.toFixed(1)}</td><td>${c.technical_score.toFixed(1)}</td>
+      <td>${c.fundamental_score === null ? "UNKNOWN" : c.fundamental_score.toFixed(1)}</td>
+      <td>${c.quality}</td><td>${c.scan_date}</td>`;
+    tr.addEventListener("click", () => loadExplain(c.symbol));
+    body.appendChild(tr);
+  });
+}
+$("#refresh-candidates").addEventListener("click", loadCandidates);
+$("#filter-universe").addEventListener("change", loadCandidates);
+$("#filter-status").addEventListener("change", loadCandidates);
+
+function renderCategoryBreakdown(title, breakdown) {
+  if (!breakdown || breakdown.length === 0) return "";
+  const sections = breakdown.map((cat) => {
+    const factorRows = cat.factors.map((f) => {
+      const val = f.value !== null && f.value !== undefined ? f.value : "—";
+      return `<div class="factor-row">
+        <div class="factor-name">${pill(f.status)} <span>${f.factor_name.replace(/_/g, " ")}</span> <span class="muted">${val}</span></div>
+        <div class="muted">${f.reason} &middot; contrib ${f.contribution.toFixed(2)}</div>
+      </div>`;
+    }).join("");
+    const pct = cat.max_score > 0 ? Math.max(0, Math.min(100, (cat.score / cat.max_score) * 100)) : 0;
+    return `<div style="margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between;"><strong>${cat.label}</strong><span>${cat.score.toFixed(1)} / ${cat.max_score.toFixed(1)}</span></div>
+      <div class="bar"><div style="width:${pct}%"></div></div>
+      <div style="margin-top:8px;">${factorRows || '<span class="muted">No factors known</span>'}</div>
+    </div>`;
+  }).join("");
+  return `<div class="card"><h3>${title}</h3>${sections}</div>`;
+}
+
+function renderFactorList(title, factors) {
+  if (!factors || factors.length === 0) return `<div class="muted">${title}: none</div>`;
+  const items = factors.map((f) => `<li>${f.factor_name.replace(/_/g, " ")} — ${f.reason}</li>`).join("");
+  return `<div><strong>${title}</strong><ul class="plain">${items}</ul></div>`;
+}
+
+async function loadExplain(symbol) {
+  const panel = $("#detail-panel");
+  panel.innerHTML = `<div class="card muted">Loading ${symbol}…</div>`;
+  let d;
+  try {
+    d = await api("/candidates/" + encodeURIComponent(symbol) + "/explain");
+  } catch (e) {
+    panel.innerHTML = `<div class="card error">${e.message}</div>`;
+    return;
+  }
+
+  const fundScoreText = d.fundamental_score === null ? "UNKNOWN" : d.fundamental_score.toFixed(1) + "/100";
+  const overallBreakdown = d.overall_score_breakdown;
+
+  const decisionRules = d.decision_rules.map((r) => `<div class="factor-row">
+      <div class="factor-name">${pill(r.status)} <span>${r.rule_name.replace(/_/g, " ")}</span></div>
+      <div class="muted">${r.actual_value !== null ? "Actual: " + r.actual_value : ""} ${r.required_value !== null ? " · Required: " + r.required_value : ""} — ${r.reason}</div>
+    </div>`).join("");
+
+  panel.innerHTML = `
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <h2 style="margin:0;">${d.symbol} <span class="muted" style="font-size:14px;">${d.universe} · ${d.alert_category || d.scanner_name}</span></h2>
+        <span class="pill ${d.decision === 'ALERT' ? 'pill-good' : d.decision === 'WATCH' ? 'pill-warn' : 'pill-bad'}">${d.decision}</span>
+      </div>
+      <div class="score-row" style="margin-top:14px;">
+        <div class="score-box"><div class="label">Overall Setup Score</div><div class="score-big">${d.overall_score.toFixed(1)}</div></div>
+        <div class="score-box"><div class="label">Technical Score</div><div class="score-big">${d.technical_score.toFixed(1)}</div></div>
+        <div class="score-box"><div class="label">Fundamental Score</div><div class="score-big">${fundScoreText}</div></div>
+        <div class="score-box"><div class="label">Quality</div><div class="score-big">${d.quality}</div></div>
+      </div>
+      <div class="banner" style="margin-top:14px;">
+        Overall = Technical × ${(overallBreakdown.technical_weight * 100).toFixed(0)}%
+        ${overallBreakdown.fundamental_contribution !== null ? " + Fundamental × " + (overallBreakdown.fundamental_weight * 100).toFixed(0) + "%" : ""}
+        &nbsp;→&nbsp; ${overallBreakdown.technical_contribution.toFixed(1)}${overallBreakdown.fundamental_contribution !== null ? " + " + overallBreakdown.fundamental_contribution.toFixed(1) : ""} = ${overallBreakdown.overall_score.toFixed(1)}
+        ${overallBreakdown.note ? "<br/><span class='muted'>" + overallBreakdown.note + "</span>" : ""}
+      </div>
+      <div class="score-row" style="margin-top:10px;">
+        <div class="score-box"><div class="label">Data freshness</div><div>${d.data_freshness.scan_date} (${d.data_freshness.days_old}d old) — ${d.data_freshness.is_fresh ? "fresh" : "stale"}</div></div>
+        <div class="score-box"><div class="label">Fundamental completeness</div><div>${d.fundamental_data_completeness_pct.toFixed(0)}%</div></div>
+        <div class="score-box"><div class="label">Technical completeness</div><div>${d.technical_data_completeness_pct.toFixed(0)}%</div></div>
+        <div class="score-box"><div class="label">Price</div><div>${d.price !== null ? "₹" + d.price.toFixed(2) : "—"}</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Why selected?</h3>
+      <div class="why-block"><div class="q">Why this stock?</div><div class="a">${d.explanation.why_this_stock}</div></div>
+      <div class="why-block"><div class="q">Why now?</div><div class="a">${d.explanation.why_now}</div></div>
+      ${renderFactorList("What confirms", d.explanation.what_confirms.map((s) => ({ factor_name: "", reason: s })))}
+      ${renderFactorList("What has not been confirmed", d.explanation.what_has_not_been_confirmed.map((s) => ({ factor_name: "", reason: s })))}
+      ${renderFactorList("Risks", d.explanation.risks.map((s) => ({ factor_name: "", reason: s })))}
+    </div>
+
+    ${renderCategoryBreakdown("Technical Analysis", d.technical_breakdown)}
+    ${d.fundamental_score === null
+      ? `<div class="card"><h3>Fundamental Analysis</h3><div class="muted">${d.fundamental_unavailable_reason}</div></div>`
+      : renderCategoryBreakdown("Fundamental Analysis", d.fundamental_breakdown)}
+
+    <div class="card">
+      <h3>Decision Engine re-validation</h3>
+      ${decisionRules}
+    </div>
+  `;
+}
+
+// ---------------- Admin -> Users ----------------
+
+async function loadUsers() {
+  const users = await api("/admin/users");
+  const body = $("#users-body");
+  body.innerHTML = "";
+  users.forEach((u) => {
+    const tr = document.createElement("tr");
+    const isSelf = currentUser && currentUser.id === u.id;
+    tr.innerHTML = `<td>${u.name}</td><td>${u.email}</td>
+      <td>${u.role}</td><td>${pill(u.status)}</td>
+      <td>${fmtDate(u.created_at)}</td><td>${fmtDate(u.last_login_at)}</td>
+      <td class="actions-cell"></td>`;
+    const actions = $(".actions-cell", tr);
+    const mk = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; b.className = "secondary " + (cls || ""); b.style.marginRight = "6px"; b.addEventListener("click", fn); return b; };
+    if (u.status === "ACTIVE") actions.appendChild(mk("Disable", "", () => userAction("disable", u)));
+    else actions.appendChild(mk("Enable", "", () => userAction("enable", u)));
+    actions.appendChild(mk("Reset password", "", () => userAction("reset-password", u)));
+    actions.appendChild(mk("Delete", "danger", () => userAction("delete", u)));
+    body.appendChild(tr);
+  });
+}
+
+async function userAction(action, user) {
+  try {
+    if (action === "disable") { await api(`/admin/users/${user.id}/disable`, { method: "PATCH" }); }
+    else if (action === "enable") { await api(`/admin/users/${user.id}/enable`, { method: "PATCH" }); }
+    else if (action === "delete") {
+      if (!confirm(`Delete ${user.email}? This cannot be undone.`)) return;
+      await api(`/admin/users/${user.id}`, { method: "DELETE" });
+    } else if (action === "reset-password") {
+      const resp = await api(`/admin/users/${user.id}/reset-password`, { method: "POST" });
+      showTempPasswordModal(user.email, resp.temporary_password);
+    }
+    loadUsers();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+function showModal(html) {
+  $("#modal-root").innerHTML = `<div class="modal-backdrop"><div class="modal">${html}</div></div>`;
+}
+function closeModal() { $("#modal-root").innerHTML = ""; }
+
+function showTempPasswordModal(email, tempPassword) {
+  showModal(`
+    <h3>Temporary password</h3>
+    <p class="muted">Share this with <strong>${email}</strong> through a secure channel — it will not be shown again. They must change it on first login.</p>
+    <code class="tp">${tempPassword}</code>
+    <div class="actions"><button id="modal-close">Done</button></div>
+  `);
+  $("#modal-close").addEventListener("click", closeModal);
+}
+
+$("#add-user-btn").addEventListener("click", () => {
+  showModal(`
+    <h3>Add user</h3>
+    <div class="row"><label class="muted">Name</label><input id="new-user-name" /></div>
+    <div class="row"><label class="muted">Email</label><input id="new-user-email" /></div>
+    <div class="row"><label class="muted">Role</label>
+      <select id="new-user-role"><option value="VIEWER">VIEWER</option><option value="ADMIN">ADMIN</option></select>
+    </div>
+    <div id="new-user-error" class="error hidden"></div>
+    <div class="actions">
+      <button class="secondary" id="modal-cancel">Cancel</button>
+      <button id="modal-create">Create</button>
+    </div>
+  `);
+  $("#modal-cancel").addEventListener("click", closeModal);
+  $("#modal-create").addEventListener("click", async () => {
+    const name = $("#new-user-name").value.trim();
+    const email = $("#new-user-email").value.trim();
+    const role = $("#new-user-role").value;
+    try {
+      const resp = await api("/admin/users", { method: "POST", body: JSON.stringify({ name, email, role }) });
+      closeModal();
+      showTempPasswordModal(resp.user.email, resp.temporary_password);
+      loadUsers();
+    } catch (e) {
+      $("#new-user-error").textContent = e.message;
+      $("#new-user-error").classList.remove("hidden");
+    }
+  });
+});
+
+// ---------------- Change password ----------------
+
+function openChangePasswordModal(forced) {
+  showModal(`
+    <h3>Change password</h3>
+    ${forced ? '<p class="muted">Your password was set by an admin — choose a new one to continue.</p>' : ""}
+    <div class="row"><label class="muted">Current password</label><input id="cp-current" type="password" /></div>
+    <div class="row"><label class="muted">New password</label><input id="cp-new" type="password" /></div>
+    <div id="cp-error" class="error hidden"></div>
+    <div class="actions">
+      ${forced ? "" : '<button class="secondary" id="cp-cancel">Cancel</button>'}
+      <button id="cp-submit">Update</button>
+    </div>
+  `);
+  if (!forced) $("#cp-cancel").addEventListener("click", closeModal);
+  $("#cp-submit").addEventListener("click", async () => {
+    try {
+      await api("/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({ current_password: $("#cp-current").value, new_password: $("#cp-new").value }),
+      });
+      closeModal();
+    } catch (e) {
+      $("#cp-error").textContent = e.message;
+      $("#cp-error").classList.remove("hidden");
+    }
+  });
+}
+$("#change-password-btn").addEventListener("click", () => openChangePasswordModal(false));
+
+boot();
+</script>
+</body>
+</html>

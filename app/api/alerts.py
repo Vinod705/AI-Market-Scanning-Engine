@@ -1,10 +1,16 @@
-"""Alert + decision read API."""
+"""Alert + decision read API.
+
+Every route requires a logged-in session — see the Phase 6 viewer
+permission list ("Alert history", "Decision breakdown"); anonymous
+internet visitors must not be able to read this.
+"""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependencies import get_current_user
 from app.config.settings import get_settings
 from app.core.exceptions import NotFoundError
 from app.database.session import get_db_session
@@ -12,7 +18,7 @@ from app.schemas.alerts import AlertOut, AlertStatusOut, DecisionOut
 from app.services.alert_service import AlertService
 from app.services.decision_service import DecisionService
 
-router = APIRouter(tags=["alerts"])
+router = APIRouter(tags=["alerts"], dependencies=[Depends(get_current_user)])
 
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 

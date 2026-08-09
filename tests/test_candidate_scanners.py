@@ -55,6 +55,7 @@ def _candidate(
         passed_rules=[],
         failed_rules=[],
         data_completeness_pct=0.0,
+        technical_data_completeness_pct=100.0,
         setup_state=setup_state,
         alert_category=None,
         reason="",

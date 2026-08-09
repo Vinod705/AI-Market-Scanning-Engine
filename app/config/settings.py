@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_db: int = 0
 
+    # --- Auth / dashboard sessions ---
+    # Sessions live in Redis (server-side, revocable — see app/auth/session_store.py),
+    # not as self-contained JWTs, so logout/expiry/disable-account are all real.
+    session_cookie_name: str = "session_id"
+    session_ttl_minutes: int = 480  # 8 hours; sliding — refreshed on each authenticated request
+    session_cookie_secure: bool = True  # False only for local plain-HTTP dev
+
     # --- Logging ---
     log_level: str = "INFO"
     log_dir: Path = BASE_DIR / "logs"

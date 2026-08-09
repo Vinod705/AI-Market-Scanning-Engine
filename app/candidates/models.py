@@ -70,7 +70,8 @@ class StockCandidate:
     risk_flags: list[str]
     passed_rules: list[str]
     failed_rules: list[str]
-    data_completeness_pct: float
+    data_completeness_pct: float  # fundamental data completeness
+    technical_data_completeness_pct: float
     setup_state: SetupState | None
     alert_category: AlertCategory | None
     reason: str
@@ -109,8 +110,15 @@ class StockCandidate:
                 "technical_factors": list(self.technical_factors),
                 "risk_flags": list(self.risk_flags),
                 "data_completeness_pct": self.data_completeness_pct,
+                "technical_data_completeness_pct": self.technical_data_completeness_pct,
                 "setup_state": self.setup_state.value if self.setup_state else None,
                 "alert_category": self.alert_category.value if self.alert_category else None,
+                # Set by the scanner's scan() before save_results() persists this
+                # snapshot — the scanner's own qualification checks, distinct from
+                # (and in addition to) the Decision Engine's independent re-validation.
+                "passed_rules": list(self.passed_rules),
+                "failed_rules": list(self.failed_rules),
+                "reason": self.reason,
             }
         )
         return snapshot
