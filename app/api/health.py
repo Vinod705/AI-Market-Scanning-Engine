@@ -61,7 +61,7 @@ async def health_check(request: Request) -> HealthResponse:
             return "not_configured"
         return "healthy" if await provider.health_check() else "unhealthy"
 
-    trendlyne_mcp = await _trendlyne_status(getattr(state, "fundamental_provider", None))
+    trendlyne_mcp = await _trendlyne_status(getattr(state, "trendlyne_provider", None))
 
     return HealthResponse(
         status="healthy" if database == "healthy" else "degraded",

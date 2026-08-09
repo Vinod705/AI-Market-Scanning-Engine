@@ -32,6 +32,7 @@ from app.data.market_updater import MarketStatusUpdater
 from app.database.session import AsyncSessionLocal, check_database_connection, dispose_engine
 from app.decision.engine import DecisionEngine
 from app.features.engine import FeatureEngine
+from app.fundamentals.orchestrator import MultiSourceFundamentalProvider
 from app.fundamentals.provider import FundamentalDataProvider
 from app.fundamentals.trendlyne_provider import TrendlyneFundamentalDataProvider
 from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProvider
@@ -85,13 +86,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater)
     feature_engine = FeatureEngine(AsyncSessionLocal, settings)
 
-    # Trendlyne MCP (Phase 7) is the first real fundamental-data source —
-    # falls back to the honest UnavailableFundamentalDataProvider (UNKNOWN,
-    # never a fabricated value) when no MCP URL is configured. Nothing else
-    # in the candidate/decision/alert pipeline changes either way.
+    # Multi-source fundamental intelligence (Phase 7 + follow-up). Trendlyne
+    # MCP is the only source with an authorized, server-callable interface
+    # — TradingView and 5paisa were both investigated and neither has one
+    # (see the Phase 7 final report), so the priority list has one entry
+    # today. MultiSourceFundamentalProvider still does real field-by-field
+    # priority merging so a second/third source can be added here later
+    # without touching the candidate/decision/alert pipeline. Falls back to
+    # the honest UnavailableFundamentalDataProvider (UNKNOWN, never a
+    # fabricated value) when nothing is configured at all.
+    trendlyne_provider: TrendlyneFundamentalDataProvider | None = (
+        TrendlyneFundamentalDataProvider(settings) if settings.trendlyne_mcp_configured else None
+    )
+    fundamental_sources: list[FundamentalDataProvider] = (
+        [trendlyne_provider] if trendlyne_provider is not None else []
+    )
     fundamental_provider: FundamentalDataProvider = (
-        TrendlyneFundamentalDataProvider(settings)
-        if settings.trendlyne_mcp_configured
+        MultiSourceFundamentalProvider(fundamental_sources)
+        if fundamental_sources
         else UnavailableFundamentalDataProvider()
     )
 
@@ -175,6 +187,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.tradingview_source = tradingview_source
     app.state.fundamental_provider = fundamental_provider
+    app.state.trendlyne_provider = trendlyne_provider
 
     yield
 

@@ -34,6 +34,38 @@ class FactorStatus(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class FieldAvailability(StrEnum):
+    """Per-field availability, distinct from FactorStatus (which judges a
+    value as good/bad). Only AVAILABLE/UNKNOWN are ever set by a provider
+    today — the IPO-specific states exist so a future provider that can
+    actually tell "no data because this IPO has no history yet" apart from
+    "this data point simply isn't reported" can say so honestly, without
+    another model change."""
+
+    AVAILABLE = "AVAILABLE"
+    LIMITED_HISTORY = "LIMITED_HISTORY"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class FieldSnapshot:
+    """Provenance for one `FundamentalData` field — which source reported
+    it, for what period, and its availability status. Purely additive:
+    `FundamentalScorer` never reads this, only the plain float fields on
+    `FundamentalData` — this exists solely so the dashboard/Telegram/API
+    can show WHERE a number came from (see Phase 7 multi-source spec)."""
+
+    field_name: str
+    value: float | None
+    source: str | None
+    period: str | None
+    status: FieldAvailability
+    as_of: date | None = None
+    alternates: list[tuple[str, float]] = field(default_factory=list)
+
+
 @dataclass
 class FundamentalFactor:
     """One scored input into the Fundamental Score — stored individually
@@ -108,6 +140,13 @@ class FundamentalData:
     # concerns, litigation, dilution, one-time gains, ...) — never inferred,
     # only ever passed through from whatever the provider actually reports.
     risk_notes: list[str] = field(default_factory=list)
+
+    # Provenance (value/source/period/status) for whichever fields above a
+    # provider actually populated — see `FieldSnapshot`. Optional: a
+    # provider may set plain float fields without this and everything
+    # still works (the scorer never reads it); only the explainability
+    # surfaces (dashboard/API/Telegram) consume it.
+    field_snapshots: dict[str, FieldSnapshot] = field(default_factory=dict)
 
 
 @dataclass

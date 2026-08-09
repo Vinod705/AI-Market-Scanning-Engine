@@ -35,6 +35,7 @@ from app.schemas.candidates import (
     DecisionExplanationOut,
     DecisionRuleOut,
     FactorOut,
+    FieldSourceOut,
     OverallScoreBreakdownOut,
 )
 
@@ -55,6 +56,26 @@ def _scanner_sources(snapshot: dict[str, object]) -> list[str]:
 
 def _factor_list(value: object) -> list[dict[str, object]]:
     return [f for f in value if isinstance(f, dict)] if isinstance(value, list) else []
+
+
+def _to_field_source_out(snapshot: dict[str, object]) -> FieldSourceOut:
+    raw_alternates = snapshot.get("alternates")
+    alternates: list[tuple[str, float]] = []
+    if isinstance(raw_alternates, list):
+        for item in raw_alternates:
+            if isinstance(item, list | tuple) and len(item) == 2:
+                source, value = item
+                as_float = DecisionValidator.as_float({"v": value}, "v")
+                if isinstance(source, str) and as_float is not None:
+                    alternates.append((source, as_float))
+    return FieldSourceOut(
+        field_name=str(snapshot.get("field_name", "")),
+        value=DecisionValidator.as_float(snapshot, "value"),
+        source=snapshot.get("source") if isinstance(snapshot.get("source"), str) else None,
+        period=snapshot.get("period") if isinstance(snapshot.get("period"), str) else None,
+        status=str(snapshot.get("status", "UNKNOWN")),
+        alternates=alternates,
+    )
 
 
 def _to_factor_out(factor: dict[str, object]) -> FactorOut:
@@ -136,6 +157,9 @@ class CandidateService:
 
         technical_factors = _factor_list(snapshot.get("technical_factors"))
         fundamental_factors = _factor_list(snapshot.get("fundamental_factors"))
+        fundamental_field_sources = [
+            _to_field_source_out(s) for s in _factor_list(snapshot.get("fundamental_field_sources"))
+        ]
         all_factors = technical_factors + fundamental_factors
         positive_factors = [_to_factor_out(f) for f in all_factors if f.get("status") == "POSITIVE"]
         negative_factors = [_to_factor_out(f) for f in all_factors if f.get("status") == "NEGATIVE"]
@@ -234,6 +258,7 @@ class CandidateService:
                 if fundamental_score is not None
                 else "Fundamental data unavailable — no data source is currently integrated."
             ),
+            fundamental_field_sources=fundamental_field_sources,
             decision=decision_result.decision.value,
             decision_quality=decision_result.quality.value if decision_result.quality else None,
             decision_rules=[_to_rule_out(r) for r in decision_result.rule_results],

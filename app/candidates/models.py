@@ -86,6 +86,12 @@ class StockCandidate:
     # `app.fundamentals.models.FundamentalFactor` / `app.technical.models.TechnicalFactor`.
     fundamental_factors: list[dict[str, object]] = field(default_factory=list)
     technical_factors: list[dict[str, object]] = field(default_factory=list)
+    # Per-field provenance (value/source/period/status/alternates) for
+    # whichever fundamental fields a provider actually populated — see
+    # `app.fundamentals.models.FieldSnapshot`. Separate from
+    # `fundamental_factors` (the scored breakdown): this is about WHERE a
+    # raw input came from, not how it was judged.
+    fundamental_field_sources: list[dict[str, object]] = field(default_factory=list)
     # Raw technical feature values (ema20, adx14, relative_volume, ...) —
     # merged into the persisted snapshot alongside everything above.
     technical_feature_snapshot: dict[str, object] = field(default_factory=dict)
@@ -113,6 +119,7 @@ class StockCandidate:
                 "technical_reasons": list(self.technical_reasons),
                 "fundamental_factors": list(self.fundamental_factors),
                 "technical_factors": list(self.technical_factors),
+                "fundamental_field_sources": list(self.fundamental_field_sources),
                 "risk_flags": list(self.risk_flags),
                 "data_completeness_pct": self.data_completeness_pct,
                 "technical_data_completeness_pct": self.technical_data_completeness_pct,

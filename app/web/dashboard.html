@@ -155,7 +155,7 @@ function fmtDate(iso) {
 }
 
 function pill(status) {
-  const map = { POSITIVE: "pill-good", NEGATIVE: "pill-bad", UNKNOWN: "pill-neutral", PASS: "pill-good", FAIL: "pill-bad", WARNING: "pill-warn", ACTIVE: "pill-good", DISABLED: "pill-bad" };
+  const map = { POSITIVE: "pill-good", NEGATIVE: "pill-bad", UNKNOWN: "pill-neutral", PASS: "pill-good", FAIL: "pill-bad", WARNING: "pill-warn", ACTIVE: "pill-good", DISABLED: "pill-bad", AVAILABLE: "pill-good", LIMITED_HISTORY: "pill-warn", INSUFFICIENT_DATA: "pill-warn", NOT_APPLICABLE: "pill-neutral" };
   const cls = map[status] || "pill-neutral";
   return `<span class="pill ${cls}">${status}</span>`;
 }
@@ -273,6 +273,22 @@ function renderCategoryBreakdown(title, breakdown) {
   return `<div class="card"><h3>${title}</h3>${sections}</div>`;
 }
 
+function renderFieldSources(sources) {
+  if (!sources || sources.length === 0) return "";
+  const rows = sources.map((s) => {
+    const val = s.value === null ? "—" : s.value.toFixed(2);
+    const alt = s.alternates && s.alternates.length
+      ? `<div class="muted">alt: ${s.alternates.map((a) => a[0] + " " + a[1]).join(", ")}</div>`
+      : "";
+    return `<div class="factor-row">
+      <div class="factor-name"><span>${s.field_name.replace(/_/g, " ")}</span> <strong>${val}</strong></div>
+      <div class="muted">${s.source || "—"} &middot; ${s.period || "—"} &middot; ${pill(s.status)}</div>
+      ${alt}
+    </div>`;
+  }).join("");
+  return `<div class="card"><h3>Fundamental Data Sources</h3><div class="muted" style="margin-bottom:8px;">VALUE &middot; SOURCE &middot; PERIOD &middot; STATUS</div>${rows}</div>`;
+}
+
 function renderFactorList(title, factors) {
   if (!factors || factors.length === 0) return `<div class="muted">${title}: none</div>`;
   const items = factors.map((f) => `<li>${f.factor_name.replace(/_/g, " ")} — ${f.reason}</li>`).join("");
@@ -342,6 +358,7 @@ async function loadExplain(symbol) {
     ${d.fundamental_score === null
       ? `<div class="card"><h3>Fundamental Analysis</h3><div class="muted">${d.fundamental_unavailable_reason}</div></div>`
       : renderCategoryBreakdown("Fundamental Analysis", d.fundamental_breakdown)}
+    ${renderFieldSources(d.fundamental_field_sources)}
 
     <div class="card">
       <h3>Decision Engine re-validation</h3>

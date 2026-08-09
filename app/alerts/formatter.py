@@ -162,6 +162,20 @@ def _format_candidate_text(context: AlertMessageContext) -> str:
     else:
         lines += [f"Fundamental Score: {fundamental_score:.0f}/100", ""]
 
+    if fundamental_score is not None:
+        field_sources_raw = snapshot.get("fundamental_field_sources")
+        sources = sorted(
+            {
+                str(f.get("source"))
+                for f in field_sources_raw
+                if isinstance(f, dict) and f.get("source")
+            }
+            if isinstance(field_sources_raw, list)
+            else set()
+        )
+        if sources:
+            lines += [f"Fundamental Data Source(s): {', '.join(sources)}", ""]
+
     if technical_score is not None:
         lines += [f"Technical Score: {technical_score:.0f}/100", ""]
 

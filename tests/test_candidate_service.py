@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.candidates.fno_momentum_scanner import FnoMomentumScanner
 from app.candidates.ipo_intraday_scanner import IpoIntradayScanner
 from app.config.settings import Settings
+from app.fundamentals.models import FundamentalData
+from app.fundamentals.provider import FundamentalDataProvider
 from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProvider
 from app.providers.base_provider import Candle, ProviderSymbol
 from app.repositories.feature_repository import DailyFeatureRepository
@@ -102,6 +104,51 @@ async def test_explain_shows_scanner_sources(
     assert result is not None
     assert result.scanner_sources == ["5PAISA"]
     assert result.scanner_confirmation_count == 1
+
+
+class _FakeTrendlyneLikeProvider(FundamentalDataProvider):
+    name = "fake_trendlyne"
+
+    async def get_fundamentals(self, symbol: str) -> FundamentalData | None:
+        from app.fundamentals.models import FieldAvailability, FieldSnapshot
+
+        data = FundamentalData(symbol=symbol, roe_pct=18.4, pe=24.1)
+        data.field_snapshots["roe_pct"] = FieldSnapshot(
+            field_name="roe_pct",
+            value=18.4,
+            source="Trendlyne",
+            period="Annual",
+            status=FieldAvailability.AVAILABLE,
+        )
+        data.field_snapshots["pe"] = FieldSnapshot(
+            field_name="pe",
+            value=24.1,
+            source="Trendlyne",
+            period="TTM",
+            status=FieldAvailability.AVAILABLE,
+        )
+        return data
+
+
+async def test_explain_shows_fundamental_field_sources(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_qualifying_fno_candidate(session_factory)
+    settings = Settings()
+    registry = ScannerRegistry()
+    registry.register(FnoMomentumScanner(settings, _FakeTrendlyneLikeProvider()))
+    engine = ScannerEngine(session_factory, registry)
+    await engine.run_all()
+
+    async with session_factory() as session:
+        result = await CandidateService(session, settings).get_explain("HINDCO")
+
+    assert result is not None
+    sources_by_field = {s.field_name: s for s in result.fundamental_field_sources}
+    assert sources_by_field["roe_pct"].value == 18.4
+    assert sources_by_field["roe_pct"].source == "Trendlyne"
+    assert sources_by_field["roe_pct"].period == "Annual"
+    assert sources_by_field["roe_pct"].status == "AVAILABLE"
 
 
 async def test_list_candidates_defaults_scanner_sources_for_pre_phase7_rows(

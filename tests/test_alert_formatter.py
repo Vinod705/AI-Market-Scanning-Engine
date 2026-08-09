@@ -131,6 +131,39 @@ def test_candidate_format_mentions_score_is_not_probability() -> None:
     assert "not a probability" in text.lower()
 
 
+def test_candidate_format_shows_fundamental_data_source() -> None:
+    context = _candidate_context(
+        feature_snapshot={
+            **_candidate_context().feature_snapshot,
+            "fundamental_score": "62.0",
+            "data_completeness_pct": 40.0,
+            "fundamental_field_sources": [
+                {
+                    "field_name": "pe",
+                    "value": 24.0,
+                    "source": "Trendlyne",
+                    "period": "TTM",
+                    "status": "AVAILABLE",
+                },
+                {
+                    "field_name": "roe_pct",
+                    "value": 8.9,
+                    "source": "Trendlyne",
+                    "period": "Annual",
+                    "status": "AVAILABLE",
+                },
+            ],
+        }
+    )
+    text = AlertMessageFormatter.format_text(context)
+    assert "Fundamental Data Source(s): Trendlyne" in text
+
+
+def test_candidate_format_omits_data_source_line_when_fundamental_unknown() -> None:
+    text = AlertMessageFormatter.format_text(_candidate_context())
+    assert "Fundamental Data Source(s)" not in text
+
+
 def test_candidate_format_shows_scanner_sources() -> None:
     text = AlertMessageFormatter.format_text(_candidate_context())
     assert "Scanner Sources: 5PAISA" in text

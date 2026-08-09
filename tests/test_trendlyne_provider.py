@@ -10,10 +10,48 @@ import httpx
 import pytest
 
 from app.config.settings import Settings
+from app.fundamentals.models import FundamentalData
 from app.fundamentals.trendlyne_mcp_client import TrendlyneMcpClient, TrendlyneMcpError
 from app.fundamentals.trendlyne_provider import (
     TrendlyneFundamentalDataProvider,
+    apply_shareholding_text,
+    apply_targeted_multi_stock_text,
     parse_overview_text,
+)
+
+_SAMPLE_SHAREHOLDING_TEXT = """summaryData:
+  ["Type","Holding","holdingId"], ["Promoter",50.48,150078587], ["FII",17.19,213859411], ["Other Institutions",11.16,null], ["Public",11.05,150078632], ["Mutual Funds",10.11,213859397]
+chartData:
+  Promoter:
+    ["Quarter","Promoter Holding (%)",{"role":"annotation"},"Pledges as % of promoter shares (%)",{"role":"annotation"}], ["Mar 2026",50.0,"50.0 %",0.0,"0.0 %"], ["Jun 2026",50.5,"50.5 %",1.5,"1.5 %"]
+  DII:
+    ["Quarter","Holding (%)",{"role":"annotation"}], ["Mar 2026",20.6,"20.6 %"], ["Jun 2026",21.3,"21.3 %"]
+insights:
+  Promoter:
+    ["note","text","positive",2]
+"""
+
+
+def _multi_stock_response_text(content: str) -> str:
+    """Mirrors the real, live-observed double-JSON-encoding: the tool's
+    text content is `{"markdown_data": "<content, itself JSON-encoded>"}`."""
+    import json
+
+    return json.dumps({"markdown_data": json.dumps(content)})
+
+
+_SAMPLE_MULTI_STOCK_CONTENT = (
+    "1127|Reliance Industries|RELIANCE|500325|2026-08-07\n"
+    "1118|Reliance Comm|RCOM|532712|2026-08-07\n"
+    "\n"
+    "ROCE Ann. %\nRELIANCE:9.17\nRCOM:0.10\n"
+    "---\n"
+    "ROCE Ann. 1Y Ago %\nRELIANCE:8.70\nRCOM:0.05\n"
+    "---\n"
+    "Total Debt to Total Equity Ann.\nRELIANCE:0.41\nRCOM:-0.46\n"
+    "---\n"
+    "Non Interest Income Ann. %\nRELIANCE:None\nRCOM:None\n"
+    "---"
 )
 
 _SAMPLE_OVERVIEW_TEXT = """technicalData:
@@ -121,6 +159,89 @@ def test_parse_overview_text_handles_missing_sections_gracefully() -> None:
     assert data.promoter_holding_pct is None
 
 
+# --- apply_shareholding_text (pure function) -----------------------------
+
+
+def test_apply_shareholding_text_sets_dii_and_pledge() -> None:
+    data = FundamentalData(symbol="RELIANCE")
+    apply_shareholding_text(data, _SAMPLE_SHAREHOLDING_TEXT)
+    assert data.dii_holding_pct == 21.3
+    assert data.promoter_pledge_pct == 1.5
+    snap = data.field_snapshots["promoter_pledge_pct"]
+    assert snap.source == "Trendlyne"
+    assert snap.period == "Jun 2026"
+
+
+def test_apply_shareholding_text_fills_promoter_fii_only_if_missing() -> None:
+    data = FundamentalData(
+        symbol="RELIANCE", promoter_holding_pct=99.0
+    )  # pretend overview already set it
+    apply_shareholding_text(data, _SAMPLE_SHAREHOLDING_TEXT)
+    assert data.promoter_holding_pct == 99.0  # not overwritten
+    assert data.fii_holding_pct == 17.19  # was None, now filled
+
+
+def test_apply_shareholding_text_handles_missing_sections_gracefully() -> None:
+    data = FundamentalData(symbol="NEWCO")
+    apply_shareholding_text(data, "unexpected format")
+    assert data.dii_holding_pct is None
+    assert data.promoter_pledge_pct is None
+
+
+# --- apply_targeted_multi_stock_text (pure function) ----------------------
+
+
+def test_apply_targeted_multi_stock_extracts_exact_symbol_and_label() -> None:
+    data = FundamentalData(symbol="RELIANCE")
+    text = _multi_stock_response_text(_SAMPLE_MULTI_STOCK_CONTENT)
+    apply_targeted_multi_stock_text(data, "RELIANCE", text)
+    assert data.roce_pct == 9.17  # current, not the "1Y Ago" variant
+    assert data.debt_to_equity == 0.41
+
+
+def test_apply_targeted_multi_stock_ignores_peer_company_values() -> None:
+    data = FundamentalData(symbol="RELIANCE")
+    text = _multi_stock_response_text(_SAMPLE_MULTI_STOCK_CONTENT)
+    apply_targeted_multi_stock_text(data, "RELIANCE", text)
+    # RCOM's 0.10/-0.46 must never leak into a RELIANCE-requested lookup.
+    assert data.roce_pct != 0.10
+    assert data.debt_to_equity != -0.46
+
+
+def test_apply_targeted_multi_stock_skips_unresolved_symbol() -> None:
+    """If the requested symbol's NSE code never appears in the header
+    block, nothing in the response can be trusted as belonging to it."""
+    data = FundamentalData(symbol="UNKNOWNCO")
+    text = _multi_stock_response_text(_SAMPLE_MULTI_STOCK_CONTENT)
+    apply_targeted_multi_stock_text(data, "UNKNOWNCO", text)
+    assert data.roce_pct is None
+    assert data.debt_to_equity is None
+
+
+def test_apply_targeted_multi_stock_never_maps_non_exact_label() -> None:
+    """ "ROCE Ann. 1Y Ago %" must never be mistaken for "ROCE Ann. %"."""
+    content = "1127|Reliance Industries|RELIANCE|500325|2026-08-07\n\nROCE Ann. 1Y Ago %\nRELIANCE:8.70\n---"
+    data = FundamentalData(symbol="RELIANCE")
+    apply_targeted_multi_stock_text(data, "RELIANCE", _multi_stock_response_text(content))
+    assert data.roce_pct is None
+
+
+def test_apply_targeted_multi_stock_treats_none_value_as_unknown() -> None:
+    data = FundamentalData(symbol="RELIANCE")
+    text = _multi_stock_response_text(_SAMPLE_MULTI_STOCK_CONTENT)
+    apply_targeted_multi_stock_text(data, "RELIANCE", text)
+    # "Non Interest Income Ann. %" isn't in the mapped fields at all, and
+    # even if it were, RELIANCE's value there is "None" — must never
+    # become a fabricated field.
+    assert not hasattr(data, "non_interest_income")
+
+
+def test_apply_targeted_multi_stock_handles_malformed_response_gracefully() -> None:
+    data = FundamentalData(symbol="RELIANCE")
+    apply_targeted_multi_stock_text(data, "RELIANCE", "not valid json at all")
+    assert data.roce_pct is None
+
+
 # --- TrendlyneMcpClient ---------------------------------------------------
 
 
@@ -221,7 +342,9 @@ async def test_get_fundamentals_caches_within_ttl() -> None:
     await provider.get_fundamentals("TCS")
     await provider.get_fundamentals("TCS")
 
-    assert call_count == 1
+    # 3 calls (overview + shareholding + targeted multi_stock) for the
+    # first fetch; the second is served entirely from cache.
+    assert call_count == 3
 
 
 async def test_get_fundamentals_does_not_cache_failures() -> None:
@@ -248,3 +371,53 @@ async def test_health_check_reflects_mcp_status() -> None:
 
     provider = _provider(handler)
     assert await provider.health_check() is True
+
+
+async def test_get_fundamentals_combines_all_three_calls() -> None:
+    """Overview + shareholding + targeted multi_stock, routed by tool name
+    — the real end-to-end shape once deployed."""
+    import json
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        tool = body["params"]["name"]
+        if tool == "get_overview_news_corp_events":
+            return httpx.Response(200, text=_sse_body(1, _SAMPLE_OVERVIEW_TEXT))
+        if tool == "get_ownership_deals_insider_sast":
+            return httpx.Response(200, text=_sse_body(2, _SAMPLE_SHAREHOLDING_TEXT))
+        if tool == "get_parameter_values_multi_stock":
+            multi_text = _multi_stock_response_text(_SAMPLE_MULTI_STOCK_CONTENT)
+            return httpx.Response(200, text=_sse_body(3, multi_text))
+        return httpx.Response(500)
+
+    provider = _provider(handler)
+    data = await provider.get_fundamentals("RELIANCE")
+
+    assert data is not None
+    assert data.pe == 17.2  # from overview
+    assert data.dii_holding_pct == 21.3  # from shareholding
+    assert data.promoter_pledge_pct == 1.5  # from shareholding
+    assert data.roce_pct == 9.17  # from targeted multi_stock
+    assert data.debt_to_equity == 0.41  # from targeted multi_stock
+    assert data.field_snapshots["roce_pct"].source == "Trendlyne"
+
+
+async def test_get_fundamentals_survives_shareholding_and_multi_stock_failure() -> None:
+    """Overview succeeds; the other two calls fail — must still return the
+    overview-sourced data rather than None."""
+    import json
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        tool = body["params"]["name"]
+        if tool == "get_overview_news_corp_events":
+            return httpx.Response(200, text=_sse_body(1, _SAMPLE_OVERVIEW_TEXT))
+        return httpx.Response(503)
+
+    provider = _provider(handler)
+    data = await provider.get_fundamentals("RELIANCE")
+
+    assert data is not None
+    assert data.pe == 17.2
+    assert data.roce_pct is None
+    assert data.dii_holding_pct is None

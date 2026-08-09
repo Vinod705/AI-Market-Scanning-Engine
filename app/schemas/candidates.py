@@ -10,6 +10,15 @@ from datetime import date, datetime
 from pydantic import BaseModel
 
 
+class FieldSourceOut(BaseModel):
+    field_name: str
+    value: float | None
+    source: str | None
+    period: str | None
+    status: str
+    alternates: list[tuple[str, float]]
+
+
 class FactorOut(BaseModel):
     factor_name: str
     category: str
@@ -115,6 +124,7 @@ class CandidateExplainOut(BaseModel):
     technical_breakdown: list[CategoryBreakdownOut]
     fundamental_breakdown: list[CategoryBreakdownOut]
     fundamental_unavailable_reason: str | None
+    fundamental_field_sources: list[FieldSourceOut]
 
     decision: str
     decision_quality: str | None

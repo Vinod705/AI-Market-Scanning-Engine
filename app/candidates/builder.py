@@ -66,6 +66,18 @@ def _factor_to_dict(factor: object) -> dict[str, object]:
     return result
 
 
+def _field_snapshot_to_dict(snapshot: object) -> dict[str, object]:
+    """Converts a `FieldSnapshot` (StrEnum status, optional date, list of
+    (source, value) alternate tuples) into a JSON-serializable dict."""
+    result: dict[str, object] = asdict(snapshot)  # type: ignore[call-overload]
+    if "status" in result:
+        result["status"] = str(result["status"])
+    as_of = result.get("as_of")
+    if as_of is not None and hasattr(as_of, "isoformat"):
+        result["as_of"] = as_of.isoformat()
+    return result
+
+
 def _quality_from_score(score: float) -> Quality:
     if score >= _HIGH_QUALITY_SCORE:
         return Quality.HIGH
@@ -223,6 +235,11 @@ async def build_candidate(
         reason="",
         fundamental_factors=[_factor_to_dict(f) for f in fundamental_result.factors],
         technical_factors=[_factor_to_dict(f) for f in technical_result.factors],
+        fundamental_field_sources=(
+            [_field_snapshot_to_dict(s) for s in fundamental_data.field_snapshots.values()]
+            if fundamental_data is not None
+            else []
+        ),
         technical_feature_snapshot=snapshot,
     )
     return CandidateBuildResult(candidate, None)
