@@ -48,6 +48,7 @@ def _candidate_context(**overrides: object) -> AlertMessageContext:
             "fundamental_reasons": [],
             "technical_reasons": ["Trend direction favorable", "RSI(14) favorable"],
             "risk_flags": ["Fundamental Score: UNKNOWN (no data source)"],
+            "scanner_sources": ["5PAISA"],
         },
         passed_rules=["setup_state_is_momentum_or_confirmed", "overall_score>=threshold"],
         timestamp=datetime(2026, 1, 5, 10, 42),
@@ -128,3 +129,30 @@ def test_candidate_format_never_invents_entry_stop_target() -> None:
 def test_candidate_format_mentions_score_is_not_probability() -> None:
     text = AlertMessageFormatter.format_text(_candidate_context())
     assert "not a probability" in text.lower()
+
+
+def test_candidate_format_shows_scanner_sources() -> None:
+    text = AlertMessageFormatter.format_text(_candidate_context())
+    assert "Scanner Sources: 5PAISA" in text
+
+
+def test_candidate_format_shows_both_scanner_sources_when_confirmed() -> None:
+    context = _candidate_context(
+        feature_snapshot={
+            **_candidate_context().feature_snapshot,
+            "scanner_sources": ["5PAISA", "TRADINGVIEW"],
+        }
+    )
+    text = AlertMessageFormatter.format_text(context)
+    assert "Scanner Sources: 5PAISA, TRADINGVIEW" in text
+
+
+def test_candidate_format_defaults_scanner_sources_when_missing() -> None:
+    """Pre-Phase-7 snapshots have no scanner_sources key at all."""
+    context = _candidate_context(
+        feature_snapshot={
+            k: v for k, v in _candidate_context().feature_snapshot.items() if k != "scanner_sources"
+        }
+    )
+    text = AlertMessageFormatter.format_text(context)
+    assert "Scanner Sources: 5PAISA" in text

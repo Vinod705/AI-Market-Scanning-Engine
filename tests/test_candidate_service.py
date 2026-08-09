@@ -86,6 +86,54 @@ async def test_list_candidates_returns_qualified_fno_candidate(
     assert summaries[0].symbol == "HINDCO"
     assert summaries[0].universe == "FNO"
     assert summaries[0].fundamental_score is None
+    assert summaries[0].scanner_sources == ["5PAISA"]
+    assert summaries[0].scanner_confirmation_count == 1
+
+
+async def test_explain_shows_scanner_sources(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_qualifying_fno_candidate(session_factory)
+    await _run_fno_scanner(session_factory)
+
+    async with session_factory() as session:
+        result = await CandidateService(session, Settings()).get_explain("HINDCO")
+
+    assert result is not None
+    assert result.scanner_sources == ["5PAISA"]
+    assert result.scanner_confirmation_count == 1
+
+
+async def test_list_candidates_defaults_scanner_sources_for_pre_phase7_rows(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A scanner_results row written before Phase 7 has no `scanner_sources`
+    key in its feature_snapshot at all — must default to 5paisa-only
+    rather than showing an empty discovery block."""
+    from app.repositories.scanner_repository import ScannerResultRepository
+
+    async with session_factory() as session:
+        symbol_row = await SymbolRepository(session).upsert(
+            ProviderSymbol(symbol="LEGACYCO", exchange="N", instrument_token="LEGACYCO")
+        )
+        await session.commit()
+        await ScannerResultRepository(session).upsert(
+            symbol_id=symbol_row.id,
+            scanner_name="fno_momentum_v1",
+            date=date(2026, 1, 5),
+            score=Decimal("70.00"),
+            status="qualified",
+            reason="all conditions met",
+            feature_snapshot={"universe": "FNO"},  # no scanner_sources key
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        summaries = await CandidateService(session, Settings()).list_candidates()
+
+    assert len(summaries) == 1
+    assert summaries[0].scanner_sources == ["5PAISA"]
+    assert summaries[0].scanner_confirmation_count == 1
 
 
 async def test_explain_returns_full_breakdown_for_qualified_candidate(

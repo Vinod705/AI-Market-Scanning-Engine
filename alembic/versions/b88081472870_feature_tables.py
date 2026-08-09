@@ -22,7 +22,12 @@ def upgrade() -> None:
     op.create_table(
         "daily_features",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("symbol_id", sa.Integer(), sa.ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "symbol_id",
+            sa.Integer(),
+            sa.ForeignKey("symbols.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("date", sa.Date(), nullable=False),
         # Trend
         sa.Column("ema20", sa.Numeric(14, 4), nullable=True),
@@ -103,7 +108,9 @@ def upgrade() -> None:
         sa.Column("rs_vs_nifty", sa.Numeric(8, 4), nullable=True),
         sa.Column("rs_vs_sector", sa.Numeric(8, 4), nullable=True),
         sa.Column("sector_rank", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -119,7 +126,12 @@ def upgrade() -> None:
     op.create_table(
         "session_features",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("symbol_id", sa.Integer(), sa.ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "symbol_id",
+            sa.Integer(),
+            sa.ForeignKey("symbols.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("date", sa.Date(), nullable=False),
         sa.Column("opening_range_high", sa.Numeric(14, 4), nullable=True),
         sa.Column("opening_range_low", sa.Numeric(14, 4), nullable=True),
@@ -130,7 +142,9 @@ def upgrade() -> None:
         sa.Column("prev_day_high", sa.Numeric(14, 4), nullable=True),
         sa.Column("prev_day_low", sa.Numeric(14, 4), nullable=True),
         sa.Column("session_vwap", sa.Numeric(14, 4), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),

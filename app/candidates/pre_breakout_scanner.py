@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.candidates.builder import build_candidate
 from app.candidates.models import AlertCategory, CandidateContext, SetupState, Universe
 from app.candidates.scanner_base import CandidateScannerBase
+from app.candidates.sources import CandidateSourceProvider
 from app.config.settings import Settings
 from app.fundamentals.provider import FundamentalDataProvider
 from app.models.symbol import Symbol
@@ -23,8 +24,13 @@ from app.universe.provider import UniverseProvider
 class PreBreakoutScanner(CandidateScannerBase):
     name = "pre_breakout_v1"
 
-    def __init__(self, settings: Settings, fundamental_provider: FundamentalDataProvider) -> None:
-        super().__init__(settings, fundamental_provider)
+    def __init__(
+        self,
+        settings: Settings,
+        fundamental_provider: FundamentalDataProvider,
+        source_providers: list[CandidateSourceProvider] | None = None,
+    ) -> None:
+        super().__init__(settings, fundamental_provider, source_providers)
         # Populated by `get_candidate_symbols` at the start of each scan
         # run; `build_context` reads it to resolve each symbol's universe
         # (IPO vs F&O) since this one scanner evaluates both.
@@ -64,6 +70,7 @@ class PreBreakoutScanner(CandidateScannerBase):
             fundamental_scorer=self._fundamental_scorer,
             technical_scorer=self._technical_scorer,
             settings=self._settings,
+            source_providers=self._source_providers,
         )
         if result.candidate is None:
             return None

@@ -31,7 +31,9 @@ def upgrade() -> None:
         sa.Column("listing_date", sa.Date(), nullable=True),
         sa.Column("is_ipo", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -49,7 +51,10 @@ def upgrade() -> None:
         "daily_prices",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column(
-            "symbol_id", sa.Integer(), sa.ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False
+            "symbol_id",
+            sa.Integer(),
+            sa.ForeignKey("symbols.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("date", sa.Date(), nullable=False),
         sa.Column("open", sa.Numeric(14, 4), nullable=False),
@@ -58,7 +63,9 @@ def upgrade() -> None:
         sa.Column("close", sa.Numeric(14, 4), nullable=False),
         sa.Column("volume", sa.BigInteger(), nullable=False),
         sa.Column("vwap", sa.Numeric(14, 4), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -75,7 +82,10 @@ def upgrade() -> None:
         "intraday_prices",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column(
-            "symbol_id", sa.Integer(), sa.ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False
+            "symbol_id",
+            sa.Integer(),
+            sa.ForeignKey("symbols.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("datetime", sa.DateTime(timezone=True), nullable=False),
         sa.Column("open", sa.Numeric(14, 4), nullable=False),
@@ -84,7 +94,9 @@ def upgrade() -> None:
         sa.Column("close", sa.Numeric(14, 4), nullable=False),
         sa.Column("volume", sa.BigInteger(), nullable=False),
         sa.Column("vwap", sa.Numeric(14, 4), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.UniqueConstraint("symbol_id", "datetime", name="uq_intraday_prices_symbol_datetime"),
     )
     op.create_index("ix_intraday_prices_symbol_id", "intraday_prices", ["symbol_id"])
@@ -110,7 +122,9 @@ def upgrade() -> None:
         sa.Column("success_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("failed_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("error_message", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
 

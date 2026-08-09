@@ -14,3 +14,5 @@ class HealthResponse(BaseModel):
     telegram: str = "unknown"
     telegram_ipo: str = "unknown"
     telegram_fno: str = "unknown"
+    tradingview: str = "unknown"
+    trendlyne_mcp: str = "unknown"

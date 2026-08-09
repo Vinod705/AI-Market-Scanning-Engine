@@ -45,6 +45,14 @@ def _str_list(value: object) -> list[str]:
     return [str(v) for v in value] if isinstance(value, list) else []
 
 
+def _scanner_sources(snapshot: dict[str, object]) -> list[str]:
+    """Pre-Phase-7 rows have no `scanner_sources` key at all — they were
+    all 5paisa-discovered by construction, so default accordingly rather
+    than showing an empty discovery block for historical candidates."""
+    sources = _str_list(snapshot.get("scanner_sources"))
+    return sources or ["5PAISA"]
+
+
 def _factor_list(value: object) -> list[dict[str, object]]:
     return [f for f in value if isinstance(f, dict)] if isinstance(value, list) else []
 
@@ -142,6 +150,7 @@ class CandidateService:
             overall_score=overall_score,
             settings=self._settings,
         )
+        scanner_sources = _scanner_sources(snapshot)
 
         scanner_passed = _str_list(snapshot.get("passed_rules"))
         scanner_failed = _str_list(snapshot.get("failed_rules"))
@@ -191,6 +200,8 @@ class CandidateService:
             overall_score=overall_score,
             quality=str(snapshot.get("quality", "LOW")),
             overall_score_breakdown=overall_score_breakdown,
+            scanner_sources=scanner_sources,
+            scanner_confirmation_count=len(scanner_sources),
             fundamental_reasons=_str_list(snapshot.get("fundamental_reasons")),
             technical_reasons=_str_list(snapshot.get("technical_reasons")),
             positive_factors=positive_factors,
@@ -240,6 +251,7 @@ class CandidateService:
 
 def _to_summary(result: ScannerResult, symbol: str) -> CandidateSummaryOut:
     snapshot = result.feature_snapshot
+    scanner_sources = _scanner_sources(snapshot)
     return CandidateSummaryOut(
         symbol=symbol,
         universe=str(snapshot.get("universe", "")),
@@ -259,6 +271,8 @@ def _to_summary(result: ScannerResult, symbol: str) -> CandidateSummaryOut:
         fundamental_score=DecisionValidator.as_float(snapshot, "fundamental_score"),
         quality=str(snapshot.get("quality", "LOW")),
         scan_date=result.date,
+        scanner_sources=scanner_sources,
+        scanner_confirmation_count=len(scanner_sources),
     )
 
 

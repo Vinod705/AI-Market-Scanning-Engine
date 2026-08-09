@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.candidates.builder import build_candidate
 from app.candidates.models import CandidateContext, Universe
+from app.candidates.sources import CandidateSourceProvider
 from app.config.settings import Settings
 from app.fundamentals.provider import FundamentalDataProvider
 from app.fundamentals.scorer import FundamentalScorer
@@ -28,11 +29,13 @@ class CandidateScannerBase(BaseScanner):
         self,
         settings: Settings,
         fundamental_provider: FundamentalDataProvider,
+        source_providers: list[CandidateSourceProvider] | None = None,
     ) -> None:
         self._settings = settings
         self._fundamental_provider = fundamental_provider
         self._fundamental_scorer = FundamentalScorer(settings)
         self._technical_scorer = TechnicalScorer(settings)
+        self._source_providers = source_providers or []
 
     @property
     @abstractmethod
@@ -49,6 +52,7 @@ class CandidateScannerBase(BaseScanner):
             fundamental_scorer=self._fundamental_scorer,
             technical_scorer=self._technical_scorer,
             settings=self._settings,
+            source_providers=self._source_providers,
         )
         if result.candidate is None:
             return None

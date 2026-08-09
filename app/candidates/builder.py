@@ -19,6 +19,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.candidates.models import SetupState, StockCandidate, Universe
+from app.candidates.sources import CandidateSourceProvider, ScannerSource
 from app.config.settings import Settings
 from app.decision.models import Quality
 from app.fundamentals.provider import FundamentalDataProvider
@@ -127,6 +128,28 @@ def _detect_setup_state(
     return None
 
 
+async def _resolve_scanner_sources(
+    *,
+    symbol: Symbol,
+    universe: Universe,
+    session: AsyncSession,
+    source_providers: list[CandidateSourceProvider] | None,
+) -> list[str]:
+    """Every candidate this pipeline produces is 5paisa-attributed by
+    construction (see `app.candidates.sources` module docstring) — the
+    only thing left to resolve is whether any *additional* configured
+    source (e.g. `TradingViewSourceProvider`) independently flagged the
+    same symbol. This does not re-run or duplicate technical scoring;
+    it only adds to `scanner_sources` metadata on the single candidate
+    already being built."""
+    sources = {ScannerSource.FIVEPAISA.value}
+    for provider in source_providers or []:
+        found = await provider.discover(universe, session)
+        if symbol.symbol in found:
+            sources.add(provider.name.value)
+    return sorted(sources)
+
+
 async def build_candidate(
     *,
     symbol: Symbol,
@@ -137,6 +160,7 @@ async def build_candidate(
     fundamental_scorer: FundamentalScorer,
     technical_scorer: TechnicalScorer,
     settings: Settings,
+    source_providers: list[CandidateSourceProvider] | None = None,
 ) -> CandidateBuildResult:
     daily = await DailyFeatureRepository(session).get_latest(symbol.id)
     if daily is None:
@@ -159,6 +183,9 @@ async def build_candidate(
 
     overall_score = _combine_scores(fundamental_result.score, technical_result.score, settings)
     setup_state = _detect_setup_state(daily, price, settings)
+    scanner_sources = await _resolve_scanner_sources(
+        symbol=symbol, universe=universe, session=session, source_providers=source_providers
+    )
 
     snapshot = _daily_feature_snapshot(daily)
     if session_feature is not None and session_feature.session_vwap is not None:
@@ -177,6 +204,7 @@ async def build_candidate(
         technical_score=technical_result.score,
         overall_score=round(min(max(overall_score, 0.0), 100.0), 2),
         quality=_quality_from_score(overall_score).value,
+        scanner_sources=scanner_sources,
         # Only the *positive* reasons — this feeds the alert's "Why" bullets
         # directly (see app/alerts/formatter.py), and mixing in unfavorable
         # factors there would read as contradictory on an ALERT message.

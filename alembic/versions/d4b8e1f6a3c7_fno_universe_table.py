@@ -21,8 +21,15 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "fno_universe",
-        sa.Column("symbol_id", sa.Integer(), sa.ForeignKey("symbols.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("added_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "symbol_id",
+            sa.Integer(),
+            sa.ForeignKey("symbols.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+        sa.Column(
+            "added_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
 

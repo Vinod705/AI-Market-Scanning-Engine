@@ -149,6 +149,19 @@ class Settings(BaseSettings):
     # as reliable as a fully-supported one.
     fundamental_min_data_completeness_pct: float = 50.0
 
+    # --- Trendlyne MCP (Phase 7 fundamental-data source) ---
+    # The full remote MCP server URL, including its auth token as a query
+    # parameter (Trendlyne's own "No Auth" scheme — the URL itself is the
+    # secret; see app/fundamentals/trendlyne_mcp_client.py). Leave blank in
+    # dev — the provider stays disconnected and candidates fall back to
+    # UnavailableFundamentalDataProvider (honest UNKNOWN) instead of failing.
+    # NEVER log this value.
+    trendlyne_mcp_url: str = ""
+    trendlyne_mcp_request_timeout: float = 20.0
+    # Fundamentals change far less often than intraday technicals — no need
+    # to call Trendlyne on every scan cycle for the same symbol.
+    fundamental_cache_ttl_minutes: int = 240
+
     # --- Technical Score (0-100, reuses Phase 3 daily/session features; should sum to 1.0) ---
     technical_weight_trend: float = 0.25
     technical_weight_momentum: float = 0.20
@@ -249,6 +262,10 @@ class Settings(BaseSettings):
     @property
     def fno_telegram_configured(self) -> bool:
         return bool(self.fno_telegram_bot_token and self.fno_telegram_chat_id)
+
+    @property
+    def trendlyne_mcp_configured(self) -> bool:
+        return bool(self.trendlyne_mcp_url)
 
     @property
     def fivepaisa_cred(self) -> dict[str, str]:

@@ -11,6 +11,8 @@ the test client, which doesn't run the lifespan) degrades gracefully to
 from fastapi import APIRouter, Request
 
 from app.database.session import check_database_connection
+from app.fundamentals.provider import FundamentalDataProvider
+from app.fundamentals.trendlyne_provider import TrendlyneFundamentalDataProvider
 from app.notifications.telegram import TelegramProvider
 from app.schemas.health import HealthResponse
 
@@ -48,6 +50,19 @@ async def health_check(request: Request) -> HealthResponse:
     telegram_ipo = await _telegram_status(getattr(state, "ipo_telegram_provider", None))
     telegram_fno = await _telegram_status(getattr(state, "fno_telegram_provider", None))
 
+    # Phase 7: TradingView has no server-callable interface in this
+    # deployment (see app.candidates.sources.TradingViewSourceProvider) —
+    # reported honestly rather than as "healthy" for a connection that
+    # doesn't exist.
+    tradingview = "not_configured" if getattr(state, "tradingview_source", None) else "unavailable"
+
+    async def _trendlyne_status(provider: FundamentalDataProvider | None) -> str:
+        if not isinstance(provider, TrendlyneFundamentalDataProvider):
+            return "not_configured"
+        return "healthy" if await provider.health_check() else "unhealthy"
+
+    trendlyne_mcp = await _trendlyne_status(getattr(state, "fundamental_provider", None))
+
     return HealthResponse(
         status="healthy" if database == "healthy" else "degraded",
         database=database,
@@ -59,4 +74,6 @@ async def health_check(request: Request) -> HealthResponse:
         telegram=telegram,
         telegram_ipo=telegram_ipo,
         telegram_fno=telegram_fno,
+        tradingview=tradingview,
+        trendlyne_mcp=trendlyne_mcp,
     )

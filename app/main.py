@@ -23,6 +23,7 @@ from app.auth.redis_client import check_redis_connection, dispose_redis
 from app.candidates.fno_momentum_scanner import FnoMomentumScanner
 from app.candidates.ipo_intraday_scanner import IpoIntradayScanner
 from app.candidates.pre_breakout_scanner import PreBreakoutScanner
+from app.candidates.sources import CandidateSourceProvider, TradingViewSourceProvider
 from app.config.settings import get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import register_exception_handlers, request_context_middleware
@@ -31,6 +32,8 @@ from app.data.market_updater import MarketStatusUpdater
 from app.database.session import AsyncSessionLocal, check_database_connection, dispose_engine
 from app.decision.engine import DecisionEngine
 from app.features.engine import FeatureEngine
+from app.fundamentals.provider import FundamentalDataProvider
+from app.fundamentals.trendlyne_provider import TrendlyneFundamentalDataProvider
 from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProvider
 from app.notifications.manager import NotificationManager
 from app.notifications.router import NotificationRouter
@@ -82,19 +85,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater)
     feature_engine = FeatureEngine(AsyncSessionLocal, settings)
 
-    # No fundamental-data source is currently integrated (see
-    # app/fundamentals/unavailable_provider.py) — the candidate scanners
-    # below score every symbol's Fundamental Score as honestly UNKNOWN
-    # rather than inventing one. Swapping in a real provider later means
-    # constructing a different `FundamentalDataProvider` here; nothing
-    # else in the candidate/decision/alert pipeline changes.
-    fundamental_provider = UnavailableFundamentalDataProvider()
+    # Trendlyne MCP (Phase 7) is the first real fundamental-data source —
+    # falls back to the honest UnavailableFundamentalDataProvider (UNKNOWN,
+    # never a fabricated value) when no MCP URL is configured. Nothing else
+    # in the candidate/decision/alert pipeline changes either way.
+    fundamental_provider: FundamentalDataProvider = (
+        TrendlyneFundamentalDataProvider(settings)
+        if settings.trendlyne_mcp_configured
+        else UnavailableFundamentalDataProvider()
+    )
+
+    # Second primary candidate-discovery source alongside 5paisa (Phase 7).
+    # Always returns no candidates in this deployment — see
+    # `TradingViewSourceProvider`'s docstring for exactly why (no
+    # server-callable TradingView API exists here) — but is wired in for
+    # real so `scanner_sources` aggregation/dedup and the health check
+    # reflect the actual (currently single-source) architecture, and a
+    # working provider can be substituted here without touching anything
+    # else in the candidate pipeline.
+    tradingview_source = TradingViewSourceProvider()
+    source_providers: list[CandidateSourceProvider] = [tradingview_source]
 
     scanner_registry = ScannerRegistry()
     scanner_registry.register(BreakoutScanner(settings))
-    scanner_registry.register(FnoMomentumScanner(settings, fundamental_provider))
-    scanner_registry.register(PreBreakoutScanner(settings, fundamental_provider))
-    scanner_registry.register(IpoIntradayScanner(settings, fundamental_provider))
+    scanner_registry.register(FnoMomentumScanner(settings, fundamental_provider, source_providers))
+    scanner_registry.register(PreBreakoutScanner(settings, fundamental_provider, source_providers))
+    scanner_registry.register(IpoIntradayScanner(settings, fundamental_provider, source_providers))
     scanner_engine = ScannerEngine(AsyncSessionLocal, scanner_registry)
 
     alert_queue = AlertQueue()
@@ -157,6 +173,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ipo_telegram_provider = ipo_telegram_provider
     app.state.fno_telegram_provider = fno_telegram_provider
     app.state.settings = settings
+    app.state.tradingview_source = tradingview_source
+    app.state.fundamental_provider = fundamental_provider
 
     yield
 

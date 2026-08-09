@@ -22,7 +22,12 @@ def upgrade() -> None:
     op.create_table(
         "alerts",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("symbol_id", sa.Integer(), sa.ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "symbol_id",
+            sa.Integer(),
+            sa.ForeignKey("symbols.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("scanner_name", sa.String(64), nullable=False),
         sa.Column("signal_type", sa.String(32), nullable=False),
         sa.Column("decision", sa.String(16), nullable=False),
@@ -38,7 +43,9 @@ def upgrade() -> None:
         sa.Column("status", sa.String(16), nullable=False, server_default="PENDING"),
         sa.Column("fingerprint", sa.String(128), nullable=False),
         sa.Column("signal_date", sa.Date(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -57,9 +64,13 @@ def upgrade() -> None:
     op.create_table(
         "alert_events",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("alert_id", sa.Integer(), sa.ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "alert_id", sa.Integer(), sa.ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("event_type", sa.String(32), nullable=False),
-        sa.Column("timestamp", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "timestamp", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column("event_metadata", sa.JSON(), nullable=True),
     )
     op.create_index("ix_alert_events_alert_id", "alert_events", ["alert_id"])
@@ -68,13 +79,17 @@ def upgrade() -> None:
     op.create_table(
         "alert_delivery_logs",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("alert_id", sa.Integer(), sa.ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "alert_id", sa.Integer(), sa.ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("provider", sa.String(32), nullable=False),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("attempt_number", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("response_metadata", sa.JSON(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_alert_delivery_logs_alert_id", "alert_delivery_logs", ["alert_id"])
     op.create_index("ix_alert_delivery_logs_provider", "alert_delivery_logs", ["provider"])

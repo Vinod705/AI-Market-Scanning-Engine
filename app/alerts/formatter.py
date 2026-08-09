@@ -127,11 +127,18 @@ def _format_candidate_text(context: AlertMessageContext) -> str:
     technical_reasons = technical_reasons_raw if isinstance(technical_reasons_raw, list) else []
     risk_flags = snapshot.get("risk_flags")
 
+    scanner_sources_raw = snapshot.get("scanner_sources")
+    scanner_sources = (
+        [str(s) for s in scanner_sources_raw]
+        if isinstance(scanner_sources_raw, list)
+        else ["5PAISA"]
+    )
+
     header = _ALERT_CATEGORY_LABELS.get(str(alert_category), "CANDIDATE")
     lines = [f"\U0001f6a8 {header}", "", f"Symbol: {context.symbol}"]
     if universe is not None:
         lines += [f"Universe: {universe}"]
-    lines += [""]
+    lines += [f"Scanner Sources: {', '.join(scanner_sources)}", ""]
 
     if price is not None:
         lines += [f"Price: ₹{price:.2f}", ""]

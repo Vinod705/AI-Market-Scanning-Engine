@@ -74,6 +74,8 @@ class CandidateSummaryOut(BaseModel):
     fundamental_score: float | None
     quality: str
     scan_date: date
+    scanner_sources: list[str]
+    scanner_confirmation_count: int
 
 
 class CandidateExplainOut(BaseModel):
@@ -94,6 +96,8 @@ class CandidateExplainOut(BaseModel):
     overall_score: float
     quality: str
     overall_score_breakdown: OverallScoreBreakdownOut
+    scanner_sources: list[str]
+    scanner_confirmation_count: int
 
     fundamental_reasons: list[str]
     technical_reasons: list[str]

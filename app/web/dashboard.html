@@ -107,7 +107,7 @@
           <span class="muted" id="candidates-count"></span>
         </div>
         <table>
-          <thead><tr><th>Symbol</th><th>Universe</th><th>Category</th><th>Setup</th><th>Overall</th><th>Technical</th><th>Fundamental</th><th>Quality</th><th>Date</th></tr></thead>
+          <thead><tr><th>Symbol</th><th>Universe</th><th>Category</th><th>Setup</th><th>Overall</th><th>Technical</th><th>Fundamental</th><th>Quality</th><th>Scanners</th><th>Date</th></tr></thead>
           <tbody id="candidates-body"></tbody>
         </table>
       </div>
@@ -244,7 +244,7 @@ async function loadCandidates() {
     tr.innerHTML = `<td>${c.symbol}</td><td>${c.universe}</td><td>${c.alert_category || "—"}</td>
       <td>${c.setup_state || "—"}</td><td>${c.overall_score.toFixed(1)}</td><td>${c.technical_score.toFixed(1)}</td>
       <td>${c.fundamental_score === null ? "UNKNOWN" : c.fundamental_score.toFixed(1)}</td>
-      <td>${c.quality}</td><td>${c.scan_date}</td>`;
+      <td>${c.quality}</td><td>${c.scanner_sources.join(", ")} (${c.scanner_confirmation_count}/2)</td><td>${c.scan_date}</td>`;
     tr.addEventListener("click", () => loadExplain(c.symbol));
     body.appendChild(tr);
   });
@@ -303,6 +303,11 @@ async function loadExplain(symbol) {
       <div style="display:flex; justify-content:space-between; align-items:baseline;">
         <h2 style="margin:0;">${d.symbol} <span class="muted" style="font-size:14px;">${d.universe} · ${d.alert_category || d.scanner_name}</span></h2>
         <span class="pill ${d.decision === 'ALERT' ? 'pill-good' : d.decision === 'WATCH' ? 'pill-warn' : 'pill-bad'}">${d.decision}</span>
+      </div>
+      <div class="score-row" style="margin-top:14px;">
+        <div class="score-box"><div class="label">5paisa</div><div>${d.scanner_sources.includes("5PAISA") ? "✓ FOUND" : "— NOT FOUND"}</div></div>
+        <div class="score-box"><div class="label">TradingView</div><div>${d.scanner_sources.includes("TRADINGVIEW") ? "✓ FOUND" : "— NOT FOUND"}</div></div>
+        <div class="score-box"><div class="label">Scanner confirmation</div><div>${d.scanner_confirmation_count}/2</div></div>
       </div>
       <div class="score-row" style="margin-top:14px;">
         <div class="score-box"><div class="label">Overall Setup Score</div><div class="score-big">${d.overall_score.toFixed(1)}</div></div>

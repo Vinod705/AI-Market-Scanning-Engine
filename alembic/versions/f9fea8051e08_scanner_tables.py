@@ -30,21 +30,30 @@ def upgrade() -> None:
         sa.Column("qualified_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("rejected_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("error_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_scanner_runs_scanner_name", "scanner_runs", ["scanner_name"])
 
     op.create_table(
         "scanner_results",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("symbol_id", sa.Integer(), sa.ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "symbol_id",
+            sa.Integer(),
+            sa.ForeignKey("symbols.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("scanner_name", sa.String(64), nullable=False),
         sa.Column("date", sa.Date(), nullable=False),
         sa.Column("score", sa.Numeric(6, 2), nullable=False),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("reason", sa.Text(), nullable=False),
         sa.Column("feature_snapshot", sa.JSON(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -52,7 +61,9 @@ def upgrade() -> None:
             onupdate=sa.func.now(),
             nullable=False,
         ),
-        sa.UniqueConstraint("symbol_id", "scanner_name", "date", name="uq_scanner_results_symbol_scanner_date"),
+        sa.UniqueConstraint(
+            "symbol_id", "scanner_name", "date", name="uq_scanner_results_symbol_scanner_date"
+        ),
     )
     op.create_index("ix_scanner_results_symbol_id", "scanner_results", ["symbol_id"])
     op.create_index("ix_scanner_results_scanner_name", "scanner_results", ["scanner_name"])
@@ -61,12 +72,24 @@ def upgrade() -> None:
     op.create_table(
         "scanner_logs",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("run_id", sa.Integer(), sa.ForeignKey("scanner_runs.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("symbol_id", sa.Integer(), sa.ForeignKey("symbols.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "run_id",
+            sa.Integer(),
+            sa.ForeignKey("scanner_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "symbol_id",
+            sa.Integer(),
+            sa.ForeignKey("symbols.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("scanner_name", sa.String(64), nullable=False),
         sa.Column("level", sa.String(16), nullable=False),
         sa.Column("message", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
     op.create_index("ix_scanner_logs_run_id", "scanner_logs", ["run_id"])
     op.create_index("ix_scanner_logs_symbol_id", "scanner_logs", ["symbol_id"])

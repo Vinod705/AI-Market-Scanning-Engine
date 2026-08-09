@@ -68,6 +68,13 @@ class FundamentalData:
     peg: float | None = None
     ev_ebitda: float | None = None
     market_cap_cr: float | None = None
+    dividend_yield_pct: float | None = None
+
+    # Absolute figures (informational — not independently scored; growth %
+    # fields above are what feed the scorer). Populated when a provider
+    # reports them directly, never derived/computed here.
+    revenue_ttm_cr: float | None = None
+    net_profit_ttm_cr: float | None = None
 
     # Growth
     revenue_growth_3y_pct: float | None = None

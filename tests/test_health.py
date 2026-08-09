@@ -21,6 +21,8 @@ async def test_health_returns_200_with_subsystem_statuses(client: AsyncClient) -
         "telegram",
         "telegram_ipo",
         "telegram_fno",
+        "tradingview",
+        "trendlyne_mcp",
     ):
         assert key in body
 
@@ -37,3 +39,12 @@ async def test_health_reports_unavailable_components_without_lifespan(client: As
     assert body["telegram"] == "unavailable"
     assert body["telegram_ipo"] == "unavailable"
     assert body["telegram_fno"] == "unavailable"
+    assert body["tradingview"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_health_reports_trendlyne_mcp_not_configured(client: AsyncClient) -> None:
+    """No Trendlyne MCP integration exists in this deployment (Phase 7
+    discovery finding) — must be reported honestly, never as healthy."""
+    response = await client.get("/health")
+    assert response.json()["trendlyne_mcp"] == "not_configured"

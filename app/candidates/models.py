@@ -76,6 +76,10 @@ class StockCandidate:
     alert_category: AlertCategory | None
     reason: str
     timestamp: datetime = field(default_factory=datetime.now)
+    # Which discovery source(s) independently flagged this symbol — see
+    # `app.candidates.sources`. Defaults to 5paisa-only: every candidate
+    # this pipeline produces is already 5paisa-data-driven by construction.
+    scanner_sources: list[str] = field(default_factory=lambda: ["5PAISA"])
     # Full per-factor breakdown (factor_name/category/value/normalized_score/
     # weight/contribution/status/reason each) — favorable, unfavorable, AND
     # unknown factors alike, for audit via the API. See
@@ -104,6 +108,7 @@ class StockCandidate:
                 "technical_score": self.technical_score,
                 "overall_score": self.overall_score,
                 "quality": self.quality,
+                "scanner_sources": list(self.scanner_sources),
                 "fundamental_reasons": list(self.fundamental_reasons),
                 "technical_reasons": list(self.technical_reasons),
                 "fundamental_factors": list(self.fundamental_factors),
