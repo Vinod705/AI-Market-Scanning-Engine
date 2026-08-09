@@ -189,12 +189,24 @@ async def build_candidate(
         price=float(price), daily=daily, session=session_feature
     )
     technical_result = technical_scorer.score(technical_inputs)
+    setup_state = _detect_setup_state(daily, price, settings)
 
-    fundamental_data = await fundamental_provider.get_fundamentals(symbol.symbol)
+    # Every candidate scanner's qualification requires an identifiable
+    # setup_state as its first check (all() over its check dict) — a
+    # symbol with none is rejected regardless of fundamental data. Skip
+    # the fundamental fetch entirely for it: fundamentals are a paid,
+    # rate-limited external call, and fetching for every scanned symbol
+    # (most of which have no setup at all on a given day) was observed
+    # live to exhaust Trendlyne's rate limit well before covering the
+    # symbols that actually matter.
+    fundamental_data = (
+        await fundamental_provider.get_fundamentals(symbol.symbol)
+        if setup_state is not None
+        else None
+    )
     fundamental_result = fundamental_scorer.score(fundamental_data)
 
     overall_score = _combine_scores(fundamental_result.score, technical_result.score, settings)
-    setup_state = _detect_setup_state(daily, price, settings)
     scanner_sources = await _resolve_scanner_sources(
         symbol=symbol, universe=universe, session=session, source_providers=source_providers
     )

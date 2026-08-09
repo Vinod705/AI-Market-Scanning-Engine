@@ -258,6 +258,37 @@ async def test_call_tool_parses_sse_response() -> None:
     assert text == "hello world"
 
 
+async def test_call_tool_raises_on_application_level_error_envelope() -> None:
+    """Trendlyne signals its own rate limit as a *successful* MCP response
+    whose text payload is {"status": "error", "message": "..."} — observed
+    live as "Maximum weighted channel limit exceeded". This must be
+    treated as a real error, not silently returned as empty tool output."""
+    import json
+
+    error_text = json.dumps(
+        {"status": "error", "message": "Maximum weighted channel limit exceeded. [code:1002]"}
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_sse_body(1, error_text))
+
+    client = _client(handler)
+    with pytest.raises(TrendlyneMcpError, match="weighted channel limit"):
+        await client.call_tool("get_overview_news_corp_events", {"stock_code": "DIXON"})
+
+
+async def test_call_tool_does_not_misfire_on_non_json_success_text() -> None:
+    """Ordinary tool output (plain YAML-ish text, not JSON) must not be
+    mistaken for the {"status": "error"} envelope."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_sse_body(1, "fundamentalData:\n  name | value\n"))
+
+    client = _client(handler)
+    text = await client.call_tool("get_overview_news_corp_events", {"stock_code": "TCS"})
+    assert "fundamentalData" in text
+
+
 async def test_call_tool_raises_on_http_error_status() -> None:
     client = _client(lambda r: httpx.Response(403, text="Forbidden"))
     with pytest.raises(TrendlyneMcpError):

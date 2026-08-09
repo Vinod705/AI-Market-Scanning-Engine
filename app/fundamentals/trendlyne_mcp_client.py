@@ -117,6 +117,24 @@ class TrendlyneMcpClient:
         text = content[0].get("text") if isinstance(content[0], dict) else None
         if not isinstance(text, str):
             raise TrendlyneMcpError(f"tool {name!r} returned non-text content")
+
+        # Trendlyne's own application-level error convention: the MCP
+        # envelope succeeds (HTTP 200, isError absent/false), but the
+        # tool's own text payload is JSON shaped {"status": "error",
+        # "message": "..."} — observed live for "Maximum weighted channel
+        # limit exceeded" under load. Without this check that response
+        # silently looks like ordinary (empty) tool output to every parser
+        # in app.fundamentals.trendlyne_provider, which would report the
+        # symbol as having no data rather than a rate-limited call.
+        try:
+            inner = json.loads(text)
+        except ValueError:
+            inner = None
+        if isinstance(inner, dict) and inner.get("status") == "error":
+            raise TrendlyneMcpError(
+                f"tool {name!r} reported an application error: {inner.get('message')}"
+            )
+
         return text
 
     async def health_check(self) -> bool:
