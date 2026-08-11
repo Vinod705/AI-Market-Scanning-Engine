@@ -20,6 +20,8 @@ from app.candidates.explainer import (
     fundamental_breakdown,
     technical_breakdown,
 )
+from app.compounding.engine import evaluate_compounding
+from app.compounding.models import CompoundingResult
 from app.config.settings import Settings
 from app.decision.evaluator import DecisionEvaluator
 from app.decision.models import DecisionCandidate, RuleResult, derive_signal_type
@@ -31,6 +33,7 @@ from app.schemas.candidates import (
     CandidateExplainOut,
     CandidateSummaryOut,
     CategoryBreakdownOut,
+    CompoundingOut,
     DataFreshnessOut,
     DecisionExplanationOut,
     DecisionRuleOut,
@@ -128,7 +131,8 @@ class CandidateService:
         }
 
         return [
-            _to_summary(r, symbols.get(r.symbol_id, str(r.symbol_id))) for r in candidate_results
+            _to_summary(r, symbols.get(r.symbol_id, str(r.symbol_id)), self._settings)
+            for r in candidate_results
         ]
 
     async def get_explain(self, symbol: str) -> CandidateExplainOut | None:
@@ -191,6 +195,8 @@ class CandidateService:
             failed_rules=combined_failed,
             risk_flags=_str_list(snapshot.get("risk_flags")),
         )
+
+        compounding = evaluate_compounding(snapshot, self._settings)
 
         days_old = (date_.today() - result.date).days
         data_freshness = DataFreshnessOut(
@@ -269,14 +275,19 @@ class CandidateService:
                 what_has_not_been_confirmed=explanation.what_has_not_been_confirmed,
                 risks=explanation.risks,
             ),
+            compounding=_to_compounding_out(compounding),
             scan_date=result.date,
             timestamp=datetime.now(),
         )
 
 
-def _to_summary(result: ScannerResult, symbol: str) -> CandidateSummaryOut:
+def _to_summary(result: ScannerResult, symbol: str, settings: Settings) -> CandidateSummaryOut:
     snapshot = result.feature_snapshot
     scanner_sources = _scanner_sources(snapshot)
+    # Reuses the same compounding engine as get_explain() — no new
+    # calculation, just calling it once more for the list view (pure,
+    # in-memory arithmetic over data already in `snapshot`).
+    compounding = evaluate_compounding(snapshot, settings)
     return CandidateSummaryOut(
         symbol=symbol,
         universe=str(snapshot.get("universe", "")),
@@ -295,6 +306,8 @@ def _to_summary(result: ScannerResult, symbol: str) -> CandidateSummaryOut:
         technical_score=DecisionValidator.as_float(snapshot, "technical_score") or 0.0,
         fundamental_score=DecisionValidator.as_float(snapshot, "fundamental_score"),
         quality=str(snapshot.get("quality", "LOW")),
+        compounding_decision=compounding.decision.value,
+        compounding_score=compounding.compounding_score,
         scan_date=result.date,
         scanner_sources=scanner_sources,
         scanner_confirmation_count=len(scanner_sources),
@@ -342,6 +355,26 @@ def _to_breakdown_out(breakdown: CategoryBreakdown) -> CategoryBreakdownOut:
         score=breakdown.score,
         max_score=breakdown.max_score,
         factors=[_to_factor_out(f) for f in breakdown.factors],
+    )
+
+
+def _to_compounding_out(result: CompoundingResult) -> CompoundingOut:
+    return CompoundingOut(
+        timeframe=result.timeframe.value,
+        setup_type=result.setup_type,
+        current_price=result.current_price,
+        target_price=result.target_price,
+        potential_upside_pct=result.potential_upside_pct,
+        stop_loss=result.stop_loss,
+        risk_pct=result.risk_pct,
+        reward_risk_ratio=result.reward_risk_ratio,
+        target_classification=result.target_classification.value,
+        higher_timeframe_confirmation=result.higher_timeframe_confirmation.value,
+        fundamental_quality=result.fundamental_quality,
+        compounding_score=result.compounding_score,
+        decision=result.decision.value,
+        reasons=list(result.reasons),
+        data_limitations=list(result.data_limitations),
     )
 
 

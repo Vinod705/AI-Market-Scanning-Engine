@@ -11,25 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.candidates.builder import build_candidate
 from app.candidates.models import SetupState, Universe
 from app.config.settings import Settings
-from app.fundamentals.models import FundamentalData
-from app.fundamentals.provider import FundamentalDataProvider
+from app.fundamentals.queue_models import FetchStatus
 from app.fundamentals.scorer import FundamentalScorer
-from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProvider
 from app.providers.base_provider import Candle, ProviderSymbol
 from app.repositories.feature_repository import DailyFeatureRepository
 from app.repositories.market_repository import PriceRepository, SymbolRepository
 from app.technical.scorer import TechnicalScorer
-
-
-class _CountingFundamentalProvider(FundamentalDataProvider):
-    name = "counting"
-
-    def __init__(self) -> None:
-        self.call_count = 0
-
-    async def get_fundamentals(self, symbol: str) -> FundamentalData | None:
-        self.call_count += 1
-        return FundamentalData(symbol=symbol, pe=20.0)
 
 
 async def _seed_symbol(
@@ -78,7 +65,6 @@ async def _build(
             universe=Universe.FNO,
             scanner_name="fno_momentum_v1",
             session=session,
-            fundamental_provider=UnavailableFundamentalDataProvider(),
             fundamental_scorer=FundamentalScorer(settings),
             technical_scorer=TechnicalScorer(settings),
             settings=settings,
@@ -182,37 +168,14 @@ async def test_overall_score_equals_technical_score_when_fundamental_unknown(
     assert result.candidate.overall_score == round(result.candidate.technical_score, 2)
 
 
-async def test_fundamental_provider_not_called_without_setup_state(
+async def test_build_candidate_never_fetches_fundamentals_itself(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """No resistance_level -> setup_state is None -> every scanner rejects
-    regardless of fundamentals, so the (paid, rate-limited) fundamental
-    provider must not be called at all."""
-    symbol_id = await _seed_symbol(session_factory, close=310.0, features={})
-    settings = Settings()
-    provider = _CountingFundamentalProvider()
-    async with session_factory() as session:
-        symbol = await SymbolRepository(session).get_by_id(symbol_id)
-        assert symbol is not None
-        result = await build_candidate(
-            symbol=symbol,
-            universe=Universe.FNO,
-            scanner_name="fno_momentum_v1",
-            session=session,
-            fundamental_provider=provider,
-            fundamental_scorer=FundamentalScorer(settings),
-            technical_scorer=TechnicalScorer(settings),
-            settings=settings,
-        )
-    assert result.candidate is not None
-    assert result.candidate.setup_state is None
-    assert result.candidate.fundamental_score is None
-    assert provider.call_count == 0
-
-
-async def test_fundamental_provider_called_when_setup_state_identified(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
+    """build_candidate() no longer calls any FundamentalDataProvider at all
+    (see Phase 7.x's FundamentalQueueService) — every candidate is built
+    with fundamental_status=PENDING regardless of setup_state, and a
+    separate, paced queue fetches real data afterwards. This is what
+    guarantees the technical scanner never blocks on (or floods) Trendlyne."""
     symbol_id = await _seed_symbol(
         session_factory,
         close=340.0,
@@ -222,24 +185,11 @@ async def test_fundamental_provider_called_when_setup_state_identified(
             "adx14": Decimal("25"),
         },
     )
-    settings = Settings()
-    provider = _CountingFundamentalProvider()
-    async with session_factory() as session:
-        symbol = await SymbolRepository(session).get_by_id(symbol_id)
-        assert symbol is not None
-        result = await build_candidate(
-            symbol=symbol,
-            universe=Universe.FNO,
-            scanner_name="fno_momentum_v1",
-            session=session,
-            fundamental_provider=provider,
-            fundamental_scorer=FundamentalScorer(settings),
-            technical_scorer=TechnicalScorer(settings),
-            settings=settings,
-        )
+    result = await _build(session_factory, symbol_id)
     assert result.candidate is not None
     assert result.candidate.setup_state == SetupState.MOMENTUM
-    assert provider.call_count == 1
+    assert result.candidate.fundamental_score is None
+    assert result.candidate.fundamental_status == FetchStatus.PENDING.value
 
 
 async def test_feature_snapshot_carries_candidate_fields(

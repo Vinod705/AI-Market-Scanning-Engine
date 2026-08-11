@@ -16,7 +16,6 @@ from app.candidates.builder import build_candidate
 from app.candidates.models import CandidateContext, Universe
 from app.candidates.sources import CandidateSourceProvider
 from app.config.settings import Settings
-from app.fundamentals.provider import FundamentalDataProvider
 from app.fundamentals.scorer import FundamentalScorer
 from app.models.symbol import Symbol
 from app.scanner.base_scanner import BaseScanner
@@ -28,11 +27,9 @@ class CandidateScannerBase(BaseScanner):
     def __init__(
         self,
         settings: Settings,
-        fundamental_provider: FundamentalDataProvider,
         source_providers: list[CandidateSourceProvider] | None = None,
     ) -> None:
         self._settings = settings
-        self._fundamental_provider = fundamental_provider
         self._fundamental_scorer = FundamentalScorer(settings)
         self._technical_scorer = TechnicalScorer(settings)
         self._source_providers = source_providers or []
@@ -48,7 +45,6 @@ class CandidateScannerBase(BaseScanner):
             universe=self.universe,
             scanner_name=self.name,
             session=session,
-            fundamental_provider=self._fundamental_provider,
             fundamental_scorer=self._fundamental_scorer,
             technical_scorer=self._technical_scorer,
             settings=self._settings,
@@ -61,6 +57,16 @@ class CandidateScannerBase(BaseScanner):
     def validate(self, context: ScannerContext) -> ValidationResult:
         assert isinstance(context, CandidateContext)
         candidate = context.candidate
+        if candidate.universe == Universe.IPO:
+            # A recently-listed IPO (see UniverseProvider.get_ipo_universe)
+            # can legitimately still lack setup_state/adx14/relative_volume
+            # for its first ~20 trading days — those need rolling windows
+            # this young a stock hasn't filled yet. scan() already
+            # null-checks every one of these, so let it through and record
+            # the real "insufficient technical history" outcome instead of
+            # this candidate silently vanishing with no persisted row at
+            # all (the behavior before this method ran).
+            return ValidationResult(valid=True)
         if candidate.setup_state is None:
             return ValidationResult(valid=False, reason="no identifiable setup state")
         snapshot = candidate.technical_feature_snapshot

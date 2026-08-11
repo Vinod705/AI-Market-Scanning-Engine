@@ -158,9 +158,46 @@ class Settings(BaseSettings):
     # NEVER log this value.
     trendlyne_mcp_url: str = ""
     trendlyne_mcp_request_timeout: float = 20.0
+    # /health must stay fast even when Trendlyne is unreachable — Docker's
+    # own container healthcheck only allows 5s (see Dockerfile). This is
+    # deliberately much shorter than the real fetch timeout above and used
+    # ONLY by TrendlyneMcpClient.health_check(), never by the actual
+    # fundamental-data fetch path.
+    trendlyne_health_check_timeout_seconds: float = 2.0
     # Fundamentals change far less often than intraday technicals — no need
     # to call Trendlyne on every scan cycle for the same symbol.
     fundamental_cache_ttl_minutes: int = 240
+
+    # --- Fundamental Queue (Phase 7.x) ---
+    # A scan cycle can discover 500-700+ candidates; firing a Trendlyne
+    # request for every one in a tight loop exhausted the account's rate
+    # limit in minutes (see app/fundamentals/queue_service.py's module
+    # docstring for the incident). The queue processes candidates in small,
+    # paced batches instead — tune these against Trendlyne's actual
+    # documented/observed limits, not assumptions.
+    fundamental_batch_size: int = 10
+    fundamental_batch_delay_seconds: float = 30.0
+    fundamental_request_delay_seconds: float = 2.0
+    # How long to leave the whole queue paused after Trendlyne reports a
+    # rate limit, before trying again — deliberately coarse (not a tight
+    # retry loop): the queue checks this once per run, it never polls
+    # Trendlyne in a loop to detect when the limit clears.
+    fundamental_rate_limit_cooldown_seconds: float = 1800.0
+    # Trendlyne's rate-limit error carries no reset-time/Retry-After info
+    # (see app/fundamentals/trendlyne_mcp_client.py) — the exact reset
+    # window is unknown, so rather than guess it, each consecutive
+    # rate-limited attempt (no success in between) waits
+    # cooldown * multiplier^n, capped at the max below. This is what stops
+    # the queue from retrying every `fundamental_rate_limit_cooldown_seconds`
+    # forever while an account-level quota stays exhausted.
+    fundamental_rate_limit_backoff_multiplier: float = 2.0
+    fundamental_rate_limit_max_cooldown_seconds: float = 21600.0  # 6h ceiling
+    # Hard ceilings so a single manual/accidental run can never consume the
+    # whole account quota. run cap bounds one run_queue() invocation; day
+    # cap bounds total requests across all runs today (tracked in
+    # fundamental_fetch_log, so it survives an application restart).
+    fundamental_max_requests_per_run: int = 200
+    fundamental_max_requests_per_day: int = 350
 
     # --- Technical Score (0-100, reuses Phase 3 daily/session features; should sum to 1.0) ---
     technical_weight_trend: float = 0.25
@@ -190,6 +227,26 @@ class Settings(BaseSettings):
     # --- IPO Intraday Scanner v1 ---
     ipo_intraday_min_rvol: float = 1.5
     ipo_intraday_min_score: float = 55.0
+    # Price-band filters derived from an explicit 52-week (trailing ~252
+    # trading session) High/Low over daily_prices (see
+    # PriceRepository.get_52_week_high_low) — NOT resistance_level/
+    # swing_high/swing_low (rolling-window technical levels, different
+    # purpose) and NOT "since listing": our local daily_prices history is
+    # only ~400 days deep, so an unbounded "since listing" high/low would
+    # silently just be a ~400-day figure for anything older than that.
+    ipo_intraday_max_pct_below_52w_high: float = 10.0
+    ipo_intraday_min_pct_above_52w_low: float = 100.0
+    ipo_intraday_min_price: float = 25.0
+    ipo_intraday_min_volume: int = 250_000
+
+    # --- IPO universe membership (app.universe.provider.UniverseProvider) ---
+    # Real listing-date age, not local data availability. Symbol.listing_date
+    # must be populated from a verified external source (see
+    # scripts/backfill_ipo_listing_dates.py) — never inferred from
+    # created_at, first daily_prices bar, or bar count, none of which can
+    # reliably express "listed within N years" (our own OHLCV history is
+    # only ~400 days deep, far short of a multi-year window).
+    ipo_universe_max_age_years: int = 3
 
     # --- Telegram Bot API notification provider ---
     # This "default" bot predates the IPO/F&O split below and still carries
@@ -211,6 +268,19 @@ class Settings(BaseSettings):
     ipo_telegram_chat_id: str = ""
     fno_telegram_bot_token: str = ""
     fno_telegram_chat_id: str = ""
+
+    # --- Compounding / Opportunity Layer (app/compounding/) ---
+    # Reuses existing support/resistance/ATR technical levels and the
+    # existing Fundamental Score — no new data source. See
+    # app/compounding/engine.py for the full calculation approach.
+    # Weights below should sum to 1.0.
+    compounding_atr_stop_multiplier: float = 1.5
+    compounding_weight_upside: float = 0.35
+    compounding_weight_risk_reward: float = 0.30
+    compounding_weight_higher_timeframe: float = 0.15
+    compounding_weight_fundamental: float = 0.20
+    compounding_strong_score_threshold: float = 75.0
+    compounding_trade_score_threshold: float = 55.0
 
     @field_validator("log_dir", mode="before")
     @classmethod

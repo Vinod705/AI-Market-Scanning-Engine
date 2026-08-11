@@ -2,7 +2,7 @@
 exercises the full path from a real scanner run through to the
 explainability API response, against an in-memory DB."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -12,7 +12,6 @@ from app.candidates.ipo_intraday_scanner import IpoIntradayScanner
 from app.config.settings import Settings
 from app.fundamentals.models import FundamentalData
 from app.fundamentals.provider import FundamentalDataProvider
-from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProvider
 from app.providers.base_provider import Candle, ProviderSymbol
 from app.repositories.feature_repository import DailyFeatureRepository
 from app.repositories.fno_universe_repository import FnoUniverseRepository
@@ -70,7 +69,7 @@ async def _seed_qualifying_fno_candidate(
 async def _run_fno_scanner(session_factory: async_sessionmaker[AsyncSession]) -> None:
     settings = Settings()
     registry = ScannerRegistry()
-    registry.register(FnoMomentumScanner(settings, UnavailableFundamentalDataProvider()))
+    registry.register(FnoMomentumScanner(settings))
     engine = ScannerEngine(session_factory, registry)
     await engine.run_all()
 
@@ -90,6 +89,16 @@ async def test_list_candidates_returns_qualified_fno_candidate(
     assert summaries[0].fundamental_score is None
     assert summaries[0].scanner_sources == ["5PAISA"]
     assert summaries[0].scanner_confirmation_count == 1
+    # Dashboard KPI row ("Strong Candidates") reuses the same compounding
+    # engine as get_explain() — must be a real, well-formed value, never
+    # fabricated for the summary/list view.
+    assert summaries[0].compounding_decision in {
+        "STRONG_CANDIDATE",
+        "TRADE_CANDIDATE",
+        "WATCH",
+        "NOT_ATTRACTIVE",
+    }
+    assert 0.0 <= summaries[0].compounding_score <= 100.0
 
 
 async def test_explain_shows_scanner_sources(
@@ -133,12 +142,21 @@ class _FakeTrendlyneLikeProvider(FundamentalDataProvider):
 async def test_explain_shows_fundamental_field_sources(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    """Scanning no longer fetches fundamentals inline (see Phase 7.x's
+    FundamentalQueueService) — the scan produces a PENDING candidate, and
+    the Fundamental Queue attaches real data afterwards. This test
+    exercises exactly that two-step flow."""
+    from app.fundamentals.queue_service import FundamentalQueueService
+
     await _seed_qualifying_fno_candidate(session_factory)
     settings = Settings()
     registry = ScannerRegistry()
-    registry.register(FnoMomentumScanner(settings, _FakeTrendlyneLikeProvider()))
+    registry.register(FnoMomentumScanner(settings))
     engine = ScannerEngine(session_factory, registry)
     await engine.run_all()
+
+    queue = FundamentalQueueService(session_factory, settings, _FakeTrendlyneLikeProvider())
+    await queue.run_queue()
 
     async with session_factory() as session:
         result = await CandidateService(session, settings).get_explain("HINDCO")
@@ -211,41 +229,64 @@ async def test_list_candidates_filters_by_universe(
 ) -> None:
     await _seed_qualifying_fno_candidate(session_factory, symbol_name="FNOCO")
 
+    today = date.today()
     async with session_factory() as session:
         symbol_row = await SymbolRepository(session).upsert(
-            ProviderSymbol(symbol="IPOCO", exchange="N", instrument_token="IPOCO")
+            ProviderSymbol(
+                symbol="IPOCO",
+                exchange="N",
+                instrument_token="IPOCO",
+                listing_date=datetime.combine(today - timedelta(days=10), datetime.min.time()),
+            )
         )
         await session.commit()
         symbol_id = symbol_row.id
         await PriceRepository(session).upsert_daily_many(
             symbol_id,
             [
+                # A real low a few days back, so the 52-week-low check
+                # (price > 2x the low) has something genuine to clear —
+                # a single flat bar can never satisfy that check.
                 Candle(
-                    timestamp=datetime(2026, 1, 5),
-                    open=340,
+                    timestamp=datetime.combine(today - timedelta(days=3), datetime.min.time()),
+                    open=150,
+                    high=155,
+                    low=148,
+                    close=150,
+                    volume=500_000,
+                ),
+                Candle(
+                    timestamp=datetime.combine(today - timedelta(days=1), datetime.min.time()),
+                    open=335,
                     high=345,
-                    low=338,
+                    low=330,
                     close=340,
                     volume=500_000,
-                )
+                ),
             ],
         )
         await DailyFeatureRepository(session).upsert(
             symbol_id,
-            date(2026, 1, 5),
+            today - timedelta(days=1),
             {
                 "resistance_level": Decimal("300"),
                 "relative_volume": Decimal("4.0"),
                 "adx14": Decimal("30"),
-                "pattern_ipo_base": True,
+                "ema20": Decimal("310"),
+                "ema50": Decimal("280"),
+                "trend_direction": "up",
+                "rsi14": Decimal("65"),
+                "macd_histogram": Decimal("1.5"),
+                "higher_high": True,
+                "higher_low": True,
             },
         )
         await session.commit()
 
     settings = Settings()
     registry = ScannerRegistry()
-    registry.register(FnoMomentumScanner(settings, UnavailableFundamentalDataProvider()))
-    registry.register(IpoIntradayScanner(settings, UnavailableFundamentalDataProvider()))
+    registry.register(FnoMomentumScanner(settings))
+    registry.register(IpoIntradayScanner(settings))
     await ScannerEngine(session_factory, registry).run_all()
 
     async with session_factory() as session:

@@ -70,6 +70,28 @@ class DecisionExplanationOut(BaseModel):
     risks: list[str]
 
 
+class CompoundingOut(BaseModel):
+    """Compounding/Opportunity assessment — see `app.compounding.engine`.
+    Computed fresh on every read from already-persisted technical/
+    fundamental fields; nothing here is a new data source."""
+
+    timeframe: str
+    setup_type: str | None
+    current_price: float | None
+    target_price: float | None
+    potential_upside_pct: float | None
+    stop_loss: float | None
+    risk_pct: float | None
+    reward_risk_ratio: float | None
+    target_classification: str
+    higher_timeframe_confirmation: str
+    fundamental_quality: str
+    compounding_score: float
+    decision: str
+    reasons: list[str]
+    data_limitations: list[str]
+
+
 class CandidateSummaryOut(BaseModel):
     symbol: str
     universe: str
@@ -82,6 +104,8 @@ class CandidateSummaryOut(BaseModel):
     technical_score: float
     fundamental_score: float | None
     quality: str
+    compounding_decision: str
+    compounding_score: float
     scan_date: date
     scanner_sources: list[str]
     scanner_confirmation_count: int
@@ -131,6 +155,8 @@ class CandidateExplainOut(BaseModel):
     decision_rules: list[DecisionRuleOut]
 
     explanation: DecisionExplanationOut
+
+    compounding: CompoundingOut
 
     scan_date: date
     timestamp: datetime

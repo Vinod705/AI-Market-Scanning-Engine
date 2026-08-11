@@ -13,6 +13,8 @@ probability of anything.
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.compounding.engine import evaluate_compounding
+from app.config.settings import Settings, get_settings
 from app.decision.validator import DecisionValidator
 
 _WHY_BULLETS = {
@@ -58,10 +60,10 @@ class AlertMessageContext:
 
 class AlertMessageFormatter:
     @staticmethod
-    def format_text(context: AlertMessageContext) -> str:
+    def format_text(context: AlertMessageContext, settings: Settings | None = None) -> str:
         if context.scanner_name in _BREAKOUT_STYLE_SCANNERS:
             return _format_breakout_text(context)
-        return _format_candidate_text(context)
+        return _format_candidate_text(context, settings or get_settings())
 
 
 def _format_breakout_text(context: AlertMessageContext) -> str:
@@ -100,7 +102,7 @@ def _format_breakout_text(context: AlertMessageContext) -> str:
     return "\n".join(lines)
 
 
-def _format_candidate_text(context: AlertMessageContext) -> str:
+def _format_candidate_text(context: AlertMessageContext, settings: Settings) -> str:
     """Renders the unified IPO/F&O candidate alert shape — everything
     here comes from `StockCandidate.to_feature_snapshot()` (see
     `app/candidates/models.py`), so a field simply doesn't appear in the
@@ -188,7 +190,33 @@ def _format_candidate_text(context: AlertMessageContext) -> str:
     if isinstance(risk_flags, list) and risk_flags:
         lines += ["Risk Flags:"] + [f"⚠ {flag}" for flag in risk_flags] + [""]
 
+    lines += _compounding_lines(snapshot, settings)
+
     lines += ["Time:", context.timestamp.strftime("%H:%M IST"), ""]
     lines += ["⚠️ Scanner signal — not an automatic trade. Score is not a probability."]
 
     return "\n".join(lines)
+
+
+def _compounding_lines(snapshot: dict[str, object], settings: Settings) -> list[str]:
+    """Compact Compounding/Opportunity summary (see `app.compounding.engine`)
+    — kept to a few lines so alerts don't balloon; the full breakdown is
+    on the dashboard's explain view."""
+    result = evaluate_compounding(snapshot, settings)
+    if result.potential_upside_pct is None or result.target_price is None:
+        return ["Compounding: UNKNOWN (insufficient target data)", ""]
+
+    lines = [
+        f"Compounding: {result.potential_upside_pct:.1f}% upside → "
+        f"₹{result.target_price:.2f} ({result.target_classification.value})"
+    ]
+    if result.stop_loss is not None and result.reward_risk_ratio is not None:
+        lines.append(f"Stop: ₹{result.stop_loss:.2f}  R:R {result.reward_risk_ratio:.2f}")
+    elif result.stop_loss is not None:
+        lines.append(f"Stop: ₹{result.stop_loss:.2f}")
+    lines.append(
+        f"Timeframe: {result.timeframe.value} · HTF: {result.higher_timeframe_confirmation.value} "
+        f"· Opportunity: {result.decision.value} ({result.compounding_score:.0f})"
+    )
+    lines.append("")
+    return lines

@@ -16,6 +16,7 @@ from app.api.auth import router as auth_router
 from app.api.candidates import router as candidates_router
 from app.api.dashboard import router as dashboard_router
 from app.api.features import router as features_router
+from app.api.fundamental_queue import router as fundamental_queue_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
 from app.api.scanner import router as scanner_router
@@ -34,6 +35,7 @@ from app.decision.engine import DecisionEngine
 from app.features.engine import FeatureEngine
 from app.fundamentals.orchestrator import MultiSourceFundamentalProvider
 from app.fundamentals.provider import FundamentalDataProvider
+from app.fundamentals.queue_service import FundamentalQueueService
 from app.fundamentals.trendlyne_provider import TrendlyneFundamentalDataProvider
 from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProvider
 from app.notifications.manager import NotificationManager
@@ -46,6 +48,7 @@ from app.scanner.engine import ScannerEngine
 from app.scanner.scanner_registry import ScannerRegistry
 from app.scheduler.alert_jobs import register_alert_jobs
 from app.scheduler.feature_jobs import register_feature_jobs
+from app.scheduler.fundamental_queue_jobs import register_fundamental_queue_jobs
 from app.scheduler.jobs import register_market_data_jobs
 from app.scheduler.scanner_jobs import register_scanner_jobs
 from app.scheduler.service import get_scheduler_service
@@ -120,10 +123,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     scanner_registry = ScannerRegistry()
     scanner_registry.register(BreakoutScanner(settings))
-    scanner_registry.register(FnoMomentumScanner(settings, fundamental_provider, source_providers))
-    scanner_registry.register(PreBreakoutScanner(settings, fundamental_provider, source_providers))
-    scanner_registry.register(IpoIntradayScanner(settings, fundamental_provider, source_providers))
+    scanner_registry.register(FnoMomentumScanner(settings, source_providers))
+    scanner_registry.register(PreBreakoutScanner(settings, source_providers))
+    scanner_registry.register(IpoIntradayScanner(settings, source_providers))
     scanner_engine = ScannerEngine(AsyncSessionLocal, scanner_registry)
+
+    # Fundamental Queue (Phase 7.x): processes candidates in small, paced
+    # batches instead of firing a Trendlyne request per scanned symbol —
+    # see app/fundamentals/queue_service.py's module docstring. Runs on
+    # its own scheduler job, independent of the technical scanner.
+    fundamental_queue = FundamentalQueueService(AsyncSessionLocal, settings, fundamental_provider)
 
     alert_queue = AlertQueue()
     alert_manager = AlertManager(AsyncSessionLocal, settings, alert_queue)
@@ -169,6 +178,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_feature_jobs(scheduler_service, feature_engine, market_updater)
     register_universe_jobs(scheduler_service, provider, AsyncSessionLocal)
     register_scanner_jobs(scheduler_service, scanner_engine)
+    register_fundamental_queue_jobs(scheduler_service, fundamental_queue)
     register_alert_jobs(scheduler_service, decision_engine, AsyncSessionLocal)
     scheduler_service.start()
 
@@ -188,6 +198,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tradingview_source = tradingview_source
     app.state.fundamental_provider = fundamental_provider
     app.state.trendlyne_provider = trendlyne_provider
+    app.state.fundamental_queue = fundamental_queue
 
     yield
 
@@ -224,6 +235,7 @@ def create_app() -> FastAPI:
     app.include_router(candidates_router)
     app.include_router(auth_router)
     app.include_router(admin_users_router)
+    app.include_router(fundamental_queue_router)
     app.include_router(dashboard_router)
 
     return app

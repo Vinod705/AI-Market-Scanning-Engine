@@ -132,6 +132,7 @@ class FivePaisaProvider(MarketDataProvider):
                         exchange=str(record["Exch"]).strip(),
                         instrument_token=str(record["ScripCode"]).strip(),
                         company_name=str(record.get("FullName") or "").strip() or None,
+                        isin=str(record.get("ISIN") or "").strip() or None,
                     )
                 )
             except (KeyError, TypeError):

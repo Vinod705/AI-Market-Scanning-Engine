@@ -50,7 +50,16 @@ from loguru import logger
 from app.config.settings import Settings
 from app.fundamentals.models import FieldAvailability, FieldSnapshot, FundamentalData
 from app.fundamentals.provider import FundamentalDataProvider
+from app.fundamentals.queue_models import FetchStatus
 from app.fundamentals.trendlyne_mcp_client import TrendlyneMcpClient, TrendlyneMcpError
+
+_RATE_LIMIT_MARKERS = ("channel limit", "rate limit", "too many requests")
+
+
+def _is_rate_limit_error(exc: TrendlyneMcpError) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _RATE_LIMIT_MARKERS)
+
 
 _SOURCE_NAME = "Trendlyne"
 
@@ -383,14 +392,25 @@ class TrendlyneFundamentalDataProvider(FundamentalDataProvider):
         self._client = client or TrendlyneMcpClient(
             mcp_url=settings.trendlyne_mcp_url,
             timeout_seconds=settings.trendlyne_mcp_request_timeout,
+            health_check_timeout_seconds=settings.trendlyne_health_check_timeout_seconds,
         )
         self._cache: dict[str, _CacheEntry] = {}
 
     async def get_fundamentals(self, symbol: str) -> FundamentalData | None:
+        data, _status, _error = await self.get_fundamentals_with_status(symbol)
+        return data
+
+    async def get_fundamentals_with_status(
+        self, symbol: str
+    ) -> tuple[FundamentalData | None, FetchStatus, str | None]:
+        """Same as `get_fundamentals`, but also reports *why* — used by the
+        Fundamental Queue (`app.fundamentals.queue_service`) to tell a
+        genuine rate limit apart from "no data for this symbol", which
+        `get_fundamentals()` alone can't distinguish (both return None)."""
         cached = self._cache.get(symbol)
         ttl_seconds = self._settings.fundamental_cache_ttl_minutes * 60
         if cached is not None and (time.monotonic() - cached.fetched_at) < ttl_seconds:
-            return cached.data
+            return cached.data, FetchStatus.CACHED, None
 
         data: FundamentalData | None = None
         try:
@@ -402,12 +422,12 @@ class TrendlyneFundamentalDataProvider(FundamentalDataProvider):
             logger.warning(
                 "Trendlyne overview unavailable for {symbol}: {error}", symbol=symbol, error=exc
             )
-
-        if data is None:
+            if _is_rate_limit_error(exc):
+                return None, FetchStatus.RATE_LIMITED, str(exc)
             # The primary call failed outright — nothing to enrich further.
             # Not cached: a transient failure should not deny fundamentals
             # for the full cache TTL.
-            return None
+            return None, FetchStatus.FAILED, str(exc)
 
         try:
             shareholding_text = await self._client.call_tool(
@@ -418,6 +438,9 @@ class TrendlyneFundamentalDataProvider(FundamentalDataProvider):
             logger.warning(
                 "Trendlyne shareholding unavailable for {symbol}: {error}", symbol=symbol, error=exc
             )
+            if _is_rate_limit_error(exc):
+                self._cache[symbol] = _CacheEntry(data=data, fetched_at=time.monotonic())
+                return data, FetchStatus.RATE_LIMITED, str(exc)
 
         try:
             multi_stock_text = await self._client.call_tool(
@@ -431,9 +454,12 @@ class TrendlyneFundamentalDataProvider(FundamentalDataProvider):
                 symbol=symbol,
                 error=exc,
             )
+            if _is_rate_limit_error(exc):
+                self._cache[symbol] = _CacheEntry(data=data, fetched_at=time.monotonic())
+                return data, FetchStatus.RATE_LIMITED, str(exc)
 
         self._cache[symbol] = _CacheEntry(data=data, fetched_at=time.monotonic())
-        return data
+        return data, FetchStatus.SUCCESS, None
 
     async def health_check(self) -> bool:
         return await self._client.health_check()

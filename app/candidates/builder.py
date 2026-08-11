@@ -22,7 +22,7 @@ from app.candidates.models import SetupState, StockCandidate, Universe
 from app.candidates.sources import CandidateSourceProvider, ScannerSource
 from app.config.settings import Settings
 from app.decision.models import Quality
-from app.fundamentals.provider import FundamentalDataProvider
+from app.fundamentals.queue_models import FetchStatus
 from app.fundamentals.scorer import FundamentalScorer
 from app.models.daily_feature import DailyFeature
 from app.models.symbol import Symbol
@@ -57,7 +57,7 @@ def _daily_feature_snapshot(daily: DailyFeature) -> dict[str, object]:
     return snapshot
 
 
-def _factor_to_dict(factor: object) -> dict[str, object]:
+def factor_to_dict(factor: object) -> dict[str, object]:
     """Converts a `FundamentalFactor`/`TechnicalFactor` dataclass (each
     carries its own `StrEnum` status) into a JSON-serializable dict."""
     result: dict[str, object] = asdict(factor)  # type: ignore[call-overload]
@@ -66,7 +66,7 @@ def _factor_to_dict(factor: object) -> dict[str, object]:
     return result
 
 
-def _field_snapshot_to_dict(snapshot: object) -> dict[str, object]:
+def field_snapshot_to_dict(snapshot: object) -> dict[str, object]:
     """Converts a `FieldSnapshot` (StrEnum status, optional date, list of
     (source, value) alternate tuples) into a JSON-serializable dict."""
     result: dict[str, object] = asdict(snapshot)  # type: ignore[call-overload]
@@ -78,7 +78,7 @@ def _field_snapshot_to_dict(snapshot: object) -> dict[str, object]:
     return result
 
 
-def _quality_from_score(score: float) -> Quality:
+def quality_from_score(score: float) -> Quality:
     if score >= _HIGH_QUALITY_SCORE:
         return Quality.HIGH
     if score >= _MEDIUM_QUALITY_SCORE:
@@ -86,7 +86,7 @@ def _quality_from_score(score: float) -> Quality:
     return Quality.LOW
 
 
-def _combine_scores(
+def combine_scores(
     fundamental_score: float | None, technical_score: float, settings: Settings
 ) -> float:
     """Weighted blend of fundamental + technical, per `Settings.overall_*_weight`.
@@ -168,7 +168,6 @@ async def build_candidate(
     universe: Universe,
     scanner_name: str,
     session: AsyncSession,
-    fundamental_provider: FundamentalDataProvider,
     fundamental_scorer: FundamentalScorer,
     technical_scorer: TechnicalScorer,
     settings: Settings,
@@ -191,22 +190,17 @@ async def build_candidate(
     technical_result = technical_scorer.score(technical_inputs)
     setup_state = _detect_setup_state(daily, price, settings)
 
-    # Every candidate scanner's qualification requires an identifiable
-    # setup_state as its first check (all() over its check dict) — a
-    # symbol with none is rejected regardless of fundamental data. Skip
-    # the fundamental fetch entirely for it: fundamentals are a paid,
-    # rate-limited external call, and fetching for every scanned symbol
-    # (most of which have no setup at all on a given day) was observed
-    # live to exhaust Trendlyne's rate limit well before covering the
-    # symbols that actually matter.
-    fundamental_data = (
-        await fundamental_provider.get_fundamentals(symbol.symbol)
-        if setup_state is not None
-        else None
-    )
-    fundamental_result = fundamental_scorer.score(fundamental_data)
+    # Fundamentals are fetched by the Fundamental Queue (see
+    # app/fundamentals/queue_service.py), never inline here — a scan can
+    # discover 500-700+ candidates, and firing a Trendlyne request per
+    # candidate synchronously exhausted the account's rate limit in
+    # minutes. build_candidate() only ever marks a candidate PENDING;
+    # the queue processes candidates later, in paced, prioritized
+    # batches, and updates the persisted row directly. This is also why
+    # the technical scanner never blocks on Trendlyne.
+    fundamental_result = fundamental_scorer.score(None)
 
-    overall_score = _combine_scores(fundamental_result.score, technical_result.score, settings)
+    overall_score = combine_scores(fundamental_result.score, technical_result.score, settings)
     scanner_sources = await _resolve_scanner_sources(
         symbol=symbol, universe=universe, session=session, source_providers=source_providers
     )
@@ -227,7 +221,7 @@ async def build_candidate(
         fundamental_score=fundamental_result.score,
         technical_score=technical_result.score,
         overall_score=round(min(max(overall_score, 0.0), 100.0), 2),
-        quality=_quality_from_score(overall_score).value,
+        quality=quality_from_score(overall_score).value,
         scanner_sources=scanner_sources,
         # Only the *positive* reasons — this feeds the alert's "Why" bullets
         # directly (see app/alerts/formatter.py), and mixing in unfavorable
@@ -245,13 +239,10 @@ async def build_candidate(
         setup_state=setup_state,
         alert_category=None,
         reason="",
-        fundamental_factors=[_factor_to_dict(f) for f in fundamental_result.factors],
-        technical_factors=[_factor_to_dict(f) for f in technical_result.factors],
-        fundamental_field_sources=(
-            [_field_snapshot_to_dict(s) for s in fundamental_data.field_snapshots.values()]
-            if fundamental_data is not None
-            else []
-        ),
+        fundamental_factors=[factor_to_dict(f) for f in fundamental_result.factors],
+        technical_factors=[factor_to_dict(f) for f in technical_result.factors],
+        fundamental_field_sources=[],
+        fundamental_status=FetchStatus.PENDING.value,
         technical_feature_snapshot=snapshot,
     )
     return CandidateBuildResult(candidate, None)

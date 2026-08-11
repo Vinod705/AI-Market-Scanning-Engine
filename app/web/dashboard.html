@@ -3,72 +3,195 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>market-intelligence dashboard</title>
+<title>Market Intelligence</title>
 <style>
   :root {
-    --bg: #0f1115; --panel: #161a21; --panel2: #1d222b; --border: #2a2f3a;
-    --text: #e6e8eb; --muted: #93a0b4; --accent: #4f8cff;
-    --good: #35c76a; --bad: #ef5361; --warn: #e8b13a;
+    /* Surfaces */
+    --bg: #0a0c10;
+    --surface-1: #12151b;
+    --surface-2: #171b22;
+    --surface-3: #1d222b;
+    --border: #232833;
+    --border-strong: #313847;
+
+    /* Text */
+    --text: #e8eaed;
+    --text-secondary: #a8b0bd;
+    --text-muted: #6b7688;
+
+    /* Accent */
+    --accent: #4f8cff;
+    --accent-soft: rgba(79, 140, 255, .12);
+
+    /* Status (reserved — never reused for categorical identity) */
+    --good: #34c77a; --good-soft: rgba(52, 199, 122, .14);
+    --warn: #e8b13a; --warn-soft: rgba(232, 177, 58, .14);
+    --bad: #ef5361;  --bad-soft: rgba(239, 83, 97, .14);
+    --mid: #6ea8fe;  --mid-soft: rgba(110, 168, 254, .14);
+    --neutral: #6b7688; --neutral-soft: rgba(107, 118, 136, .14);
+
+    /* Categorical — scanner sources (fixed hue order, distinct from status) */
+    --cat-5paisa: #6ea8fe;
+    --cat-tradingview: #b39cf9;
+    --cat-screener: #45d6c2;
+
+    --font-ui: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Consolas, monospace;
+
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 28px;
+    --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 14px; }
-  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  header .who { color: var(--muted); font-size: 13px; }
-  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
-  button.secondary { background: var(--panel2); border: 1px solid var(--border); color: var(--text); }
+  html, body { max-width: 100%; overflow-x: hidden; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 13.5px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+  ::selection { background: var(--accent-soft); }
+
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* ---------------- Header ---------------- */
+  .app-header { background: var(--surface-1); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  .header-top { display: flex; align-items: center; justify-content: space-between; padding: 13px 22px; gap: 16px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .brand-mark { width: 30px; height: 30px; border-radius: var(--radius-md); background: linear-gradient(160deg, var(--accent), #2f5fd6); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; letter-spacing: .01em; flex-shrink: 0; }
+  .brand-title { font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+  .brand-tagline { font-size: 11.5px; color: var(--text-muted); margin-top: 1px; }
+  .header-actions { display: flex; align-items: center; gap: 14px; }
+  .header-actions .who { color: var(--text-secondary); font-size: 12.5px; }
+  .header-status { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding: 8px 22px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); background: var(--surface-2); }
+  .status-item { display: inline-flex; align-items: center; white-space: nowrap; }
+  .status-item strong { color: var(--text); font-weight: 600; margin-left: 3px; }
+  .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; }
+  .dot-good { background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); }
+  .dot-warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+  .dot-bad { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+  .dot-neutral { background: var(--text-muted); }
+
+  button { background: var(--accent); color: white; border: none; border-radius: var(--radius-md); padding: 7px 13px; cursor: pointer; font-size: 12.5px; font-weight: 550; font-family: inherit; transition: background .12s ease; }
+  button:hover { background: #3f7ae8; }
+  button.secondary { background: var(--surface-3); border: 1px solid var(--border-strong); color: var(--text); }
+  button.secondary:hover { background: #232935; }
   button.danger { background: var(--bad); }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  input, select { background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 9px; font-size: 13px; }
-  a.tab { color: var(--muted); text-decoration: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; }
-  a.tab.active { color: var(--text); background: var(--panel2); }
-  main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+  input, select { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text); border-radius: var(--radius-md); padding: 7px 10px; font-size: 12.5px; font-family: inherit; }
+  input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  a.tab { color: var(--text-muted); text-decoration: none; padding: 8px 14px; border-radius: var(--radius-md); cursor: pointer; font-size: 13px; font-weight: 550; }
+  a.tab.active { color: var(--text); background: var(--surface-3); }
+
+  main { padding: var(--sp-5) 22px 40px; max-width: 1280px; margin: 0 auto; }
   .hidden { display: none !important; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
-  th { color: var(--muted); font-weight: 500; }
-  tr.clickable { cursor: pointer; }
-  tr.clickable:hover { background: var(--panel2); }
-  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-  .pill-good { background: rgba(53,199,106,.15); color: var(--good); }
-  .pill-bad { background: rgba(239,83,97,.15); color: var(--bad); }
-  .pill-warn { background: rgba(232,177,58,.15); color: var(--warn); }
-  .pill-neutral { background: rgba(147,160,180,.15); color: var(--muted); }
-  .score-big { font-size: 28px; font-weight: 700; }
-  .score-row { display: flex; gap: 24px; flex-wrap: wrap; }
-  .score-box { flex: 1; min-width: 140px; }
-  .score-box .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  .bar { height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; margin-top: 6px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-4); margin-bottom: var(--sp-4); }
+  .card h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); margin: 0 0 var(--sp-3); font-weight: 650; }
+  .card h2 { font-size: 18px; margin: 0; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: var(--sp-4); flex-wrap: wrap; }
+
+  /* ---------------- KPI row ---------------- */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+  .kpi-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-3) var(--sp-4); }
+  .kpi-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: 7px; }
+  .kpi-value { font-family: var(--font-mono); font-size: 23px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .kpi-sub { font-size: 11px; color: var(--text-secondary); margin-top: 6px; }
+  .kpi-accent-good .kpi-value { color: var(--good); }
+  .kpi-accent-mid .kpi-value { color: var(--mid); }
+
+  /* ---------------- Tables ---------------- */
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 720px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; white-space: nowrap; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num-cell, th.num-cell { text-align: right; }
+  tr.clickable { cursor: pointer; transition: background .1s ease; }
+  tr.clickable:hover { background: var(--surface-2); }
+  tr.clickable.selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  .symbol-cell { font-weight: 650; letter-spacing: .01em; }
+
+  .score-cell { display: inline-flex; align-items: center; gap: 8px; }
+  .score-cell .num { font-weight: 650; min-width: 34px; text-align: right; }
+  .mini-bar { width: 42px; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; flex-shrink: 0; }
+  .mini-bar > div { height: 100%; border-radius: 2px; }
+  .bar-good { background: var(--good); }
+  .bar-mid { background: var(--mid); }
+  .bar-warn { background: var(--warn); }
+  .unknown-val { color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: .03em; }
+
+  .pill { display: inline-block; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10.5px; font-weight: 650; letter-spacing: .01em; white-space: nowrap; }
+  .pill-good { background: var(--good-soft); color: var(--good); }
+  .pill-bad { background: var(--bad-soft); color: var(--bad); }
+  .pill-warn { background: var(--warn-soft); color: var(--warn); }
+  .pill-mid { background: var(--mid-soft); color: var(--mid); }
+  .pill-neutral { background: var(--neutral-soft); color: var(--text-secondary); }
+
+  .badge-source { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; letter-spacing: .02em; margin-right: 4px; }
+  .badge-5paisa { background: rgba(110, 168, 254, .14); color: var(--cat-5paisa); }
+  .badge-tradingview { background: rgba(179, 156, 249, .14); color: var(--cat-tradingview); }
+  .badge-screener { background: rgba(69, 214, 194, .14); color: var(--cat-screener); }
+  .badge-confirmed { background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(79, 140, 255, .3); }
+  .source-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+  .bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; margin-top: 6px; }
   .bar > div { height: 100%; background: var(--accent); }
-  .factor-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+  .factor-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed var(--border); font-size: 12.5px; gap: 12px; }
   .factor-row:last-child { border-bottom: none; }
   .factor-name { display: flex; gap: 8px; align-items: baseline; }
   .why-block { margin-bottom: 10px; }
-  .why-block .q { color: var(--accent); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
-  .why-block .a { margin-top: 2px; }
+  .why-block .q { color: var(--accent); font-weight: 650; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .why-block .a { margin-top: 3px; }
   ul.plain { margin: 4px 0 0 0; padding-left: 18px; }
-  .error { color: var(--bad); font-size: 13px; margin-top: 8px; }
-  .muted { color: var(--muted); }
-  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
-  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 10; }
-  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: 380px; }
+  .error { color: var(--bad); font-size: 12.5px; margin-top: 8px; }
+  .muted { color: var(--text-muted); }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .modal { background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 20px; width: 380px; max-width: calc(100vw - 32px); }
   .modal h3 { margin-top: 0; }
   .modal .row { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; }
   .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-  .banner { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; }
+  .banner { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 12px; font-size: 12.5px; }
   #login-view { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
   .login-card { width: 320px; }
   .login-card .row { margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
   .login-card input { width: 100%; }
-  code.tp { background: var(--panel2); padding: 6px 8px; border-radius: 6px; display: inline-block; margin-top: 6px; word-break: break-all; }
+  code.tp { background: var(--surface-2); padding: 6px 8px; border-radius: var(--radius-sm); display: inline-block; margin-top: 6px; word-break: break-all; font-family: var(--font-mono); }
+
+  .score-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .score-box { flex: 1; min-width: 140px; }
+  .score-box .label { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .score-box .value { margin-top: 2px; }
+  .score-big { font-family: var(--font-mono); font-size: 26px; font-weight: 700; }
+
+  .section-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-4); }
+
+  /* ---------------- Candidate cards (mobile) ---------------- */
+  .candidate-cards { display: none; flex-direction: column; gap: var(--sp-3); }
+  .candidate-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--sp-3) var(--sp-4); cursor: pointer; }
+  .candidate-card:active { background: var(--surface-3); }
+  .candidate-card .cc-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .candidate-card .cc-symbol { font-weight: 700; font-size: 14.5px; }
+  .candidate-card .cc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 12px; }
+  .candidate-card .cc-grid .l { color: var(--text-muted); }
+
+  /* ---------------- Responsive ---------------- */
+  @media (max-width: 860px) {
+    main { padding: var(--sp-4) 14px 32px; }
+    .header-top { padding: 12px 14px; }
+    .header-status { padding: 8px 14px; }
+    .section-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 760px) {
+    .table-scroll { display: none; }
+    .candidate-cards { display: flex; }
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .kpi-grid { grid-template-columns: 1fr 1fr; }
+    .brand-tagline { display: none; }
+    .header-actions .who { display: none; }
+  }
 </style>
 </head>
 <body>
 
 <div id="login-view" class="hidden">
   <div class="card login-card">
-    <h3>market-intelligence</h3>
+    <h3>Market Intelligence</h3>
     <div class="row"><label class="muted">Email</label><input id="login-email" type="text" autocomplete="username" /></div>
     <div class="row"><label class="muted">Password</label><input id="login-password" type="password" autocomplete="current-password" /></div>
     <button id="login-submit" style="width:100%">Log in</button>
@@ -77,13 +200,22 @@
 </div>
 
 <div id="app-view" class="hidden">
-  <header>
-    <h1>market-intelligence <span class="muted" style="font-weight:400">— read-only</span></h1>
-    <div style="display:flex; align-items:center; gap:14px;">
-      <span class="who"><span id="who-name"></span> · <span id="who-role"></span></span>
-      <button class="secondary" id="change-password-btn">Change password</button>
-      <button class="secondary" id="logout-btn">Log out</button>
+  <header class="app-header">
+    <div class="header-top">
+      <div class="brand">
+        <div class="brand-mark">MI</div>
+        <div>
+          <div class="brand-title">Market Intelligence</div>
+          <div class="brand-tagline">AI-powered Market &amp; Fundamental Intelligence</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="who"><span id="who-name"></span> &middot; <span id="who-role"></span></span>
+        <button class="secondary" id="change-password-btn">Change password</button>
+        <button class="secondary" id="logout-btn">Log out</button>
+      </div>
     </div>
+    <div class="header-status" id="system-health-body">Loading system status&hellip;</div>
   </header>
   <main>
     <div class="toolbar">
@@ -92,7 +224,10 @@
     </div>
 
     <section id="tab-candidates">
+      <div class="kpi-grid" id="kpi-row"></div>
+
       <div class="card">
+        <h3>Candidate Intelligence</h3>
         <div class="toolbar">
           <select id="filter-universe">
             <option value="">All universes</option>
@@ -103,26 +238,49 @@
             <option value="qualified">Qualified</option>
             <option value="rejected">Rejected</option>
           </select>
+          <select id="filter-quality">
+            <option value="">All qualities</option>
+            <option value="HIGH">High</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="LOW">Low</option>
+          </select>
+          <select id="filter-setup">
+            <option value="">All setups</option>
+          </select>
+          <select id="filter-scanner">
+            <option value="">All scanners</option>
+          </select>
+          <input id="filter-search" type="text" placeholder="Search symbol&hellip;" style="width:140px" />
           <button class="secondary" id="refresh-candidates">Refresh</button>
           <span class="muted" id="candidates-count"></span>
         </div>
-        <table>
-          <thead><tr><th>Symbol</th><th>Universe</th><th>Category</th><th>Setup</th><th>Overall</th><th>Technical</th><th>Fundamental</th><th>Quality</th><th>Scanners</th><th>Date</th></tr></thead>
-          <tbody id="candidates-body"></tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th>Symbol</th><th>Universe</th><th>Setup</th>
+              <th class="num-cell">Overall</th><th class="num-cell">Technical</th><th class="num-cell">Fundamental</th>
+              <th>Quality</th><th>Scanner Sources</th><th>Date</th>
+            </tr></thead>
+            <tbody id="candidates-body"></tbody>
+          </table>
+        </div>
+        <div class="candidate-cards" id="candidates-cards"></div>
       </div>
       <div id="detail-panel"></div>
     </section>
 
     <section id="tab-admin" class="hidden">
+      <div id="fundamental-queue-panel" class="card"></div>
       <div class="card">
         <div class="toolbar">
           <button id="add-user-btn">Add user</button>
         </div>
-        <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Last login</th><th>Actions</th></tr></thead>
-          <tbody id="users-body"></tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Last login</th><th>Actions</th></tr></thead>
+            <tbody id="users-body"></tbody>
+          </table>
+        </div>
       </div>
     </section>
   </main>
@@ -155,9 +313,119 @@ function fmtDate(iso) {
 }
 
 function pill(status) {
-  const map = { POSITIVE: "pill-good", NEGATIVE: "pill-bad", UNKNOWN: "pill-neutral", PASS: "pill-good", FAIL: "pill-bad", WARNING: "pill-warn", ACTIVE: "pill-good", DISABLED: "pill-bad", AVAILABLE: "pill-good", LIMITED_HISTORY: "pill-warn", INSUFFICIENT_DATA: "pill-warn", NOT_APPLICABLE: "pill-neutral" };
+  const map = {
+    POSITIVE: "pill-good", NEGATIVE: "pill-bad", UNKNOWN: "pill-neutral",
+    PASS: "pill-good", FAIL: "pill-bad", WARNING: "pill-warn",
+    ACTIVE: "pill-good", DISABLED: "pill-bad",
+    AVAILABLE: "pill-good", LIMITED_HISTORY: "pill-warn", INSUFFICIENT_DATA: "pill-warn", NOT_APPLICABLE: "pill-neutral",
+    STRONG_CANDIDATE: "pill-good", TRADE_CANDIDATE: "pill-mid", WATCH: "pill-warn", NOT_ATTRACTIVE: "pill-bad",
+    CONFIRMED: "pill-good", NOT_CONFIRMED: "pill-warn",
+    MINIMUM_OPPORTUNITY: "pill-warn", GOOD: "pill-mid", STRONG: "pill-good", VERY_STRONG: "pill-good", EXCEPTIONAL: "pill-good",
+    HIGH: "pill-good", MEDIUM: "pill-mid", LOW: "pill-neutral",
+    ALERT: "pill-good", REJECT: "pill-bad",
+  };
   const cls = map[status] || "pill-neutral";
   return `<span class="pill ${cls}">${status}</span>`;
+}
+
+// Score bar color band — same 55/75 thresholds this system already uses
+// for quality tiers (see app.candidates.builder.quality_from_score).
+function scoreBand(value) {
+  if (value >= 75) return "bar-good";
+  if (value >= 55) return "bar-mid";
+  return "bar-warn";
+}
+
+function scoreCell(value) {
+  if (value === null || value === undefined) {
+    return `<span class="unknown-val">UNKNOWN</span>`;
+  }
+  const clamped = Math.max(0, Math.min(100, value));
+  return `<span class="score-cell">
+    <span class="mini-bar"><div class="${scoreBand(clamped)}" style="width:${clamped}%"></div></span>
+    <span class="num">${value.toFixed(1)}</span>
+  </span>`;
+}
+
+function sourceBadges(sources, count) {
+  const map = { "5PAISA": "badge-5paisa", "TRADINGVIEW": "badge-tradingview", "SCREENER": "badge-screener" };
+  const badges = (sources || []).map((s) => `<span class="badge-source ${map[s] || "badge-5paisa"}">${s}</span>`);
+  if ((count || 0) >= 2) badges.push(`<span class="badge-source badge-confirmed">CONFIRMED ${count}x</span>`);
+  return `<span class="source-row">${badges.join("")}</span>`;
+}
+
+// ---------------- Live system health strip ----------------
+
+function statusItem(label, level, valueText) {
+  const dotClass = { healthy: "dot-good", warning: "dot-warn", critical: "dot-bad", unknown: "dot-neutral" }[level] || "dot-neutral";
+  return `<span class="status-item"><span class="status-dot ${dotClass}"></span>${label}<strong>${valueText}</strong></span>`;
+}
+
+function pctLevel(pct) {
+  if (pct === null || pct === undefined) return "unknown";
+  if (pct >= 90) return "critical";
+  if (pct >= 75) return "warning";
+  return "healthy";
+}
+
+let healthPollTimer = null;
+
+async function loadSystemHealth() {
+  const body = $("#system-health-body");
+  if (!body) return;
+
+  let h;
+  try {
+    h = await api("/health");
+  } catch (e) {
+    body.innerHTML = statusItem("System ", "critical", "Unavailable");
+    return;
+  }
+
+  let marketItem = "";
+  try {
+    const m = await api("/market/status");
+    marketItem = statusItem("Session ", m.market_open ? "healthy" : "unknown", m.market_open ? "Open" : "Closed");
+  } catch (e) { /* market status is a nice-to-have, never block the rest of the strip */ }
+
+  const mem = h.memory_percent == null ? "—"
+    : `${Math.round(h.memory_used_mb)}/${Math.round(h.memory_total_mb)}MB (${h.memory_percent}%)`;
+  const disk = h.disk_percent == null ? "—" : `${h.disk_used_gb}/${h.disk_total_gb}GB (${h.disk_percent}%)`;
+
+  let usageItem = "";
+  if (currentUser && currentUser.role === "ADMIN") {
+    try {
+      const q = await api("/admin/fundamental-queue");
+      usageItem = statusItem("Trendlyne usage ", q.is_paused ? "warning" : "healthy", `${q.requests_today}/${q.daily_budget}`);
+    } catch (e) { /* admin-only, ignore for non-admins or transient errors */ }
+  }
+
+  const items = [
+    marketItem,
+    statusItem("VM CPU ", pctLevel(h.cpu_percent), h.cpu_percent == null ? "—" : h.cpu_percent + "%"),
+    statusItem("Mem ", pctLevel(h.memory_percent), mem),
+    statusItem("Disk ", pctLevel(h.disk_percent), disk),
+    statusItem("App ", h.status === "healthy" ? "healthy" : "warning", h.status === "healthy" ? "Healthy" : "Degraded"),
+    statusItem("DB ", h.database === "healthy" ? "healthy" : "critical", h.database === "healthy" ? "Healthy" : "Down"),
+    statusItem("Trendlyne ", h.trendlyne_mcp === "healthy" ? "healthy" : h.trendlyne_mcp === "not_configured" ? "unknown" : "critical",
+      h.trendlyne_mcp === "healthy" ? "Healthy" : h.trendlyne_mcp === "not_configured" ? "Not configured" : "Rate Limited"),
+    statusItem("Queue ", h.fundamental_queue === "healthy" ? "healthy" : h.fundamental_queue === "rate_limited" ? "warning" : h.fundamental_queue === "not_configured" ? "unknown" : "critical",
+      h.fundamental_queue === "healthy" ? "Healthy" : h.fundamental_queue === "rate_limited" ? "Paused" : h.fundamental_queue === "not_configured" ? "Not configured" : "Unhealthy"),
+    usageItem,
+  ].filter(Boolean);
+
+  body.innerHTML = `${items.join("")}<span class="muted" style="margin-left:auto;">Updated ${new Date().toLocaleTimeString()}</span>`;
+}
+
+function startSystemHealthPolling() {
+  loadSystemHealth();
+  if (healthPollTimer) clearInterval(healthPollTimer);
+  healthPollTimer = setInterval(loadSystemHealth, 20000);
+}
+
+function stopSystemHealthPolling() {
+  if (healthPollTimer) clearInterval(healthPollTimer);
+  healthPollTimer = null;
 }
 
 // ---------------- Auth / shell ----------------
@@ -190,6 +458,7 @@ function showApp() {
   if (currentUser.role === "ADMIN") $("#admin-tab").classList.remove("hidden");
   else $("#admin-tab").classList.add("hidden");
   loadCandidates();
+  startSystemHealthPolling();
 }
 
 $("#login-submit").addEventListener("click", async () => {
@@ -212,6 +481,7 @@ $("#login-password").addEventListener("keydown", (e) => { if (e.key === "Enter")
 $("#logout-btn").addEventListener("click", async () => {
   try { await api("/auth/logout", { method: "POST" }); } catch (e) {}
   currentUser = null;
+  stopSystemHealthPolling();
   showLogin();
 });
 
@@ -222,11 +492,14 @@ $$(".tab").forEach((tab) => {
     const name = tab.dataset.tab;
     $("#tab-candidates").classList.toggle("hidden", name !== "candidates");
     $("#tab-admin").classList.toggle("hidden", name !== "admin");
-    if (name === "admin") loadUsers();
+    if (name === "admin") { loadUsers(); loadFundamentalQueueStatus(); }
   });
 });
 
 // ---------------- Candidates + explainability ----------------
+
+let allCandidates = [];
+let selectedSymbol = null;
 
 async function loadCandidates() {
   const universe = $("#filter-universe").value;
@@ -234,24 +507,125 @@ async function loadCandidates() {
   const params = new URLSearchParams();
   if (universe) params.set("universe", universe);
   params.set("status", status);
-  const rows = await api("/candidates?" + params.toString());
-  $("#candidates-count").textContent = rows.length + " candidate(s)";
-  const body = $("#candidates-body");
-  body.innerHTML = "";
-  rows.forEach((c) => {
-    const tr = document.createElement("tr");
-    tr.className = "clickable";
-    tr.innerHTML = `<td>${c.symbol}</td><td>${c.universe}</td><td>${c.alert_category || "—"}</td>
-      <td>${c.setup_state || "—"}</td><td>${c.overall_score.toFixed(1)}</td><td>${c.technical_score.toFixed(1)}</td>
-      <td>${c.fundamental_score === null ? "UNKNOWN" : c.fundamental_score.toFixed(1)}</td>
-      <td>${c.quality}</td><td>${c.scanner_sources.join(", ")} (${c.scanner_confirmation_count}/2)</td><td>${c.scan_date}</td>`;
-    tr.addEventListener("click", () => loadExplain(c.symbol));
-    body.appendChild(tr);
-  });
+  allCandidates = await api("/candidates?" + params.toString());
+  populateDynamicFilterOptions(allCandidates);
+  applyClientFilters();
 }
 $("#refresh-candidates").addEventListener("click", loadCandidates);
 $("#filter-universe").addEventListener("change", loadCandidates);
 $("#filter-status").addEventListener("change", loadCandidates);
+
+// Options are derived from whatever values are actually present in the
+// loaded candidates — never a hard-coded list the backend might not
+// actually produce.
+function populateDynamicFilterOptions(rows) {
+  const setups = Array.from(new Set(rows.map((c) => c.setup_state).filter(Boolean))).sort();
+  const scanners = Array.from(new Set(rows.flatMap((c) => c.scanner_sources))).sort();
+
+  const setupSel = $("#filter-setup");
+  const prevSetup = setupSel.value;
+  setupSel.innerHTML = '<option value="">All setups</option>' + setups.map((s) => `<option value="${s}">${s.replace(/_/g, " ")}</option>`).join("");
+  if (setups.includes(prevSetup)) setupSel.value = prevSetup;
+
+  const scannerSel = $("#filter-scanner");
+  const prevScanner = scannerSel.value;
+  scannerSel.innerHTML = '<option value="">All scanners</option>' + scanners.map((s) => `<option value="${s}">${s}</option>`).join("");
+  if (scanners.includes(prevScanner)) scannerSel.value = prevScanner;
+}
+
+// Quality/Setup/Scanner/Search are applied client-side against the
+// already-fetched candidates — Universe and Status are the only
+// server-supported filters, unchanged from before.
+function applyClientFilters() {
+  const quality = $("#filter-quality").value;
+  const setup = $("#filter-setup").value;
+  const scanner = $("#filter-scanner").value;
+  const search = $("#filter-search").value.trim().toUpperCase();
+
+  const rows = allCandidates.filter((c) => {
+    if (quality && c.quality !== quality) return false;
+    if (setup && c.setup_state !== setup) return false;
+    if (scanner && !c.scanner_sources.includes(scanner)) return false;
+    if (search && !c.symbol.toUpperCase().includes(search)) return false;
+    return true;
+  });
+
+  $("#candidates-count").textContent = rows.length + " of " + allCandidates.length + " candidate(s)";
+  renderKpis(rows);
+  renderCandidateTable(rows);
+  renderCandidateCards(rows);
+}
+["filter-quality", "filter-setup", "filter-scanner"].forEach((id) => $("#" + id).addEventListener("change", applyClientFilters));
+$("#filter-search").addEventListener("input", applyClientFilters);
+
+function renderKpis(rows) {
+  const el = $("#kpi-row");
+  if (rows.length === 0) {
+    el.innerHTML = `<div class="kpi-card"><div class="kpi-label">Total Candidates</div><div class="kpi-value">0</div></div>`;
+    return;
+  }
+  const avg = (values) => values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  const withFundamental = rows.filter((c) => c.fundamental_score !== null);
+  const kpis = [
+    { label: "Total Candidates", value: rows.length },
+    { label: "High Quality", value: rows.filter((c) => c.quality === "HIGH").length, accent: "good" },
+    { label: "Strong Candidates", value: rows.filter((c) => c.compounding_decision === "STRONG_CANDIDATE").length, accent: "good" },
+    { label: "Fundamental Coverage", value: Math.round((withFundamental.length / rows.length) * 100) + "%", accent: "mid" },
+    { label: "Avg Overall", value: avg(rows.map((c) => c.overall_score)).toFixed(1) },
+    { label: "Avg Technical", value: avg(rows.map((c) => c.technical_score)).toFixed(1) },
+    { label: "Avg Fundamental", value: withFundamental.length ? avg(withFundamental.map((c) => c.fundamental_score)).toFixed(1) : "UNKNOWN" },
+    { label: "Scanner Confirmations", value: rows.filter((c) => c.scanner_confirmation_count >= 2).length, accent: "mid" },
+  ];
+  el.innerHTML = kpis.map((k) => `<div class="kpi-card ${k.accent ? "kpi-accent-" + k.accent : ""}">
+    <div class="kpi-label">${k.label}</div>
+    <div class="kpi-value">${k.value}</div>
+  </div>`).join("");
+}
+
+function candidateRowHtml(c) {
+  return `<td class="symbol-cell">${c.symbol}</td><td>${c.universe}</td>
+    <td>${c.setup_state ? pill(c.setup_state) : '<span class="muted">—</span>'}</td>
+    <td class="num-cell">${scoreCell(c.overall_score)}</td>
+    <td class="num-cell">${scoreCell(c.technical_score)}</td>
+    <td class="num-cell">${scoreCell(c.fundamental_score)}</td>
+    <td>${pill(c.quality)}</td>
+    <td>${sourceBadges(c.scanner_sources, c.scanner_confirmation_count)}</td>
+    <td class="num muted">${c.scan_date}</td>`;
+}
+
+function renderCandidateTable(rows) {
+  const body = $("#candidates-body");
+  body.innerHTML = "";
+  rows.forEach((c) => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable" + (c.symbol === selectedSymbol ? " selected" : "");
+    tr.innerHTML = candidateRowHtml(c);
+    tr.addEventListener("click", () => loadExplain(c.symbol));
+    body.appendChild(tr);
+  });
+}
+
+function renderCandidateCards(rows) {
+  const el = $("#candidates-cards");
+  el.innerHTML = rows.map((c) => `<div class="candidate-card" data-symbol="${c.symbol}">
+    <div class="cc-top">
+      <span class="cc-symbol">${c.symbol}</span>
+      ${pill(c.quality)}
+    </div>
+    <div class="source-row" style="margin-bottom:8px;">${sourceBadges(c.scanner_sources, c.scanner_confirmation_count)}</div>
+    <div class="cc-grid">
+      <div><span class="l">Universe</span> ${c.universe}</div>
+      <div><span class="l">Setup</span> ${c.setup_state || "—"}</div>
+      <div><span class="l">Overall</span> ${scoreCell(c.overall_score)}</div>
+      <div><span class="l">Technical</span> ${scoreCell(c.technical_score)}</div>
+      <div><span class="l">Fundamental</span> ${scoreCell(c.fundamental_score)}</div>
+      <div><span class="l">Date</span> <span class="muted">${c.scan_date}</span></div>
+    </div>
+  </div>`).join("");
+  $$(".candidate-card", el).forEach((card) => {
+    card.addEventListener("click", () => loadExplain(card.dataset.symbol));
+  });
+}
 
 function renderCategoryBreakdown(title, breakdown) {
   if (!breakdown || breakdown.length === 0) return "";
@@ -259,13 +633,13 @@ function renderCategoryBreakdown(title, breakdown) {
     const factorRows = cat.factors.map((f) => {
       const val = f.value !== null && f.value !== undefined ? f.value : "—";
       return `<div class="factor-row">
-        <div class="factor-name">${pill(f.status)} <span>${f.factor_name.replace(/_/g, " ")}</span> <span class="muted">${val}</span></div>
+        <div class="factor-name">${pill(f.status)} <span>${f.factor_name.replace(/_/g, " ")}</span> <span class="muted num">${val}</span></div>
         <div class="muted">${f.reason} &middot; contrib ${f.contribution.toFixed(2)}</div>
       </div>`;
     }).join("");
     const pct = cat.max_score > 0 ? Math.max(0, Math.min(100, (cat.score / cat.max_score) * 100)) : 0;
     return `<div style="margin-bottom:14px;">
-      <div style="display:flex; justify-content:space-between;"><strong>${cat.label}</strong><span>${cat.score.toFixed(1)} / ${cat.max_score.toFixed(1)}</span></div>
+      <div style="display:flex; justify-content:space-between;"><strong>${cat.label}</strong><span class="num">${cat.score.toFixed(1)} / ${cat.max_score.toFixed(1)}</span></div>
       <div class="bar"><div style="width:${pct}%"></div></div>
       <div style="margin-top:8px;">${factorRows || '<span class="muted">No factors known</span>'}</div>
     </div>`;
@@ -281,12 +655,12 @@ function renderFieldSources(sources) {
       ? `<div class="muted">alt: ${s.alternates.map((a) => a[0] + " " + a[1]).join(", ")}</div>`
       : "";
     return `<div class="factor-row">
-      <div class="factor-name"><span>${s.field_name.replace(/_/g, " ")}</span> <strong>${val}</strong></div>
+      <div class="factor-name"><span>${s.field_name.replace(/_/g, " ")}</span> <strong class="num">${val}</strong></div>
       <div class="muted">${s.source || "—"} &middot; ${s.period || "—"} &middot; ${pill(s.status)}</div>
       ${alt}
     </div>`;
   }).join("");
-  return `<div class="card"><h3>Fundamental Data Sources</h3><div class="muted" style="margin-bottom:8px;">VALUE &middot; SOURCE &middot; PERIOD &middot; STATUS</div>${rows}</div>`;
+  return `<div class="card"><h3>Data Sources</h3><div class="muted" style="margin-bottom:8px;">VALUE &middot; SOURCE &middot; PERIOD &middot; STATUS</div>${rows}</div>`;
 }
 
 function renderFactorList(title, factors) {
@@ -295,9 +669,67 @@ function renderFactorList(title, factors) {
   return `<div><strong>${title}</strong><ul class="plain">${items}</ul></div>`;
 }
 
+function renderCompoundingOverview(c) {
+  if (!c) return "";
+  return `<div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:baseline;">
+      <h3 style="margin:0;">Compounding Opportunity</h3>
+      ${pill(c.decision)}
+    </div>
+    <div class="score-row" style="margin-top:14px;">
+      <div class="score-box"><div class="label">Compounding Score</div><div class="score-big">${c.compounding_score.toFixed(1)}</div></div>
+      <div class="score-box"><div class="label">Timeframe</div><div class="value">${c.timeframe}</div></div>
+      <div class="score-box"><div class="label">Target Classification</div><div class="value">${pill(c.target_classification)}</div></div>
+      <div class="score-box"><div class="label">Higher-TF Confirmation</div><div class="value">${pill(c.higher_timeframe_confirmation)}</div></div>
+    </div>
+    ${renderFactorList("Why", c.reasons.map((s) => ({ factor_name: "", reason: s })))}
+  </div>`;
+}
+
+function renderTargetUpside(c) {
+  if (!c) return "";
+  const money = (v) => (v === null ? '<span class="unknown-val">UNKNOWN</span>' : "₹" + v.toFixed(2));
+  const pct = (v) => (v === null ? '<span class="unknown-val">UNKNOWN</span>' : v.toFixed(1) + "%");
+  return `<div class="card">
+    <h3>Target / Upside</h3>
+    <div class="score-row">
+      <div class="score-box"><div class="label">Potential Upside</div><div class="value score-big" style="font-size:20px;">${pct(c.potential_upside_pct)}</div></div>
+      <div class="score-box"><div class="label">Target Price</div><div class="value num">${money(c.target_price)}</div></div>
+      <div class="score-box"><div class="label">Current Price</div><div class="value num">${money(c.current_price)}</div></div>
+    </div>
+  </div>`;
+}
+
+function renderRiskStopLoss(c) {
+  if (!c) return "";
+  const money = (v) => (v === null ? '<span class="unknown-val">UNKNOWN</span>' : "₹" + v.toFixed(2));
+  const pct = (v) => (v === null ? '<span class="unknown-val">UNKNOWN</span>' : v.toFixed(1) + "%");
+  const rr = (v) => (v === null ? '<span class="unknown-val">UNKNOWN</span>' : v.toFixed(2) + "x");
+  return `<div class="card">
+    <h3>Risk / Stop Loss</h3>
+    <div class="score-row">
+      <div class="score-box"><div class="label">Stop Loss</div><div class="value num">${money(c.stop_loss)}</div></div>
+      <div class="score-box"><div class="label">Risk</div><div class="value num">${pct(c.risk_pct)}</div></div>
+      <div class="score-box"><div class="label">Risk / Reward</div><div class="value num">${rr(c.reward_risk_ratio)}</div></div>
+    </div>
+  </div>`;
+}
+
+function renderLimitations(d) {
+  const items = [];
+  if (d.fundamental_score === null && d.fundamental_unavailable_reason) items.push(d.fundamental_unavailable_reason);
+  if (d.compounding && d.compounding.data_limitations) items.push(...d.compounding.data_limitations);
+  if (!d.data_freshness.is_fresh) items.push(`Data is ${d.data_freshness.days_old} day(s) old (stale beyond the configured freshness window).`);
+  if (items.length === 0) return `<div class="card"><h3>Limitations / UNKNOWN Fields</h3><div class="muted">No known data limitations for this candidate.</div></div>`;
+  return `<div class="card"><h3>Limitations / UNKNOWN Fields</h3><ul class="plain">${items.map((i) => `<li>${i}</li>`).join("")}</ul></div>`;
+}
+
 async function loadExplain(symbol) {
+  selectedSymbol = symbol;
+  applyClientFilters(); // re-render table/cards so the clicked row gets the .selected state
+
   const panel = $("#detail-panel");
-  panel.innerHTML = `<div class="card muted">Loading ${symbol}…</div>`;
+  panel.innerHTML = `<div class="card muted">Loading ${symbol}&hellip;</div>`;
   let d;
   try {
     d = await api("/candidates/" + encodeURIComponent(symbol) + "/explain");
@@ -316,53 +748,101 @@ async function loadExplain(symbol) {
 
   panel.innerHTML = `
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:baseline;">
-        <h2 style="margin:0;">${d.symbol} <span class="muted" style="font-size:14px;">${d.universe} · ${d.alert_category || d.scanner_name}</span></h2>
-        <span class="pill ${d.decision === 'ALERT' ? 'pill-good' : d.decision === 'WATCH' ? 'pill-warn' : 'pill-bad'}">${d.decision}</span>
-      </div>
-      <div class="score-row" style="margin-top:14px;">
-        <div class="score-box"><div class="label">5paisa</div><div>${d.scanner_sources.includes("5PAISA") ? "✓ FOUND" : "— NOT FOUND"}</div></div>
-        <div class="score-box"><div class="label">TradingView</div><div>${d.scanner_sources.includes("TRADINGVIEW") ? "✓ FOUND" : "— NOT FOUND"}</div></div>
-        <div class="score-box"><div class="label">Scanner confirmation</div><div>${d.scanner_confirmation_count}/2</div></div>
+      <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px;">
+        <h2>${d.symbol} <span class="muted" style="font-size:13px; font-weight:400;">${d.universe} &middot; ${d.alert_category || d.scanner_name}</span></h2>
+        ${pill(d.decision)}
       </div>
       <div class="score-row" style="margin-top:14px;">
         <div class="score-box"><div class="label">Overall Setup Score</div><div class="score-big">${d.overall_score.toFixed(1)}</div></div>
         <div class="score-box"><div class="label">Technical Score</div><div class="score-big">${d.technical_score.toFixed(1)}</div></div>
         <div class="score-box"><div class="label">Fundamental Score</div><div class="score-big">${fundScoreText}</div></div>
-        <div class="score-box"><div class="label">Quality</div><div class="score-big">${d.quality}</div></div>
+        <div class="score-box"><div class="label">Quality</div><div class="value">${pill(d.quality)}</div></div>
       </div>
       <div class="banner" style="margin-top:14px;">
-        Overall = Technical × ${(overallBreakdown.technical_weight * 100).toFixed(0)}%
-        ${overallBreakdown.fundamental_contribution !== null ? " + Fundamental × " + (overallBreakdown.fundamental_weight * 100).toFixed(0) + "%" : ""}
-        &nbsp;→&nbsp; ${overallBreakdown.technical_contribution.toFixed(1)}${overallBreakdown.fundamental_contribution !== null ? " + " + overallBreakdown.fundamental_contribution.toFixed(1) : ""} = ${overallBreakdown.overall_score.toFixed(1)}
+        Overall = Technical &times; ${(overallBreakdown.technical_weight * 100).toFixed(0)}%
+        ${overallBreakdown.fundamental_contribution !== null ? " + Fundamental &times; " + (overallBreakdown.fundamental_weight * 100).toFixed(0) + "%" : ""}
+        &nbsp;&rarr;&nbsp; ${overallBreakdown.technical_contribution.toFixed(1)}${overallBreakdown.fundamental_contribution !== null ? " + " + overallBreakdown.fundamental_contribution.toFixed(1) : ""} = ${overallBreakdown.overall_score.toFixed(1)}
         ${overallBreakdown.note ? "<br/><span class='muted'>" + overallBreakdown.note + "</span>" : ""}
       </div>
       <div class="score-row" style="margin-top:10px;">
-        <div class="score-box"><div class="label">Data freshness</div><div>${d.data_freshness.scan_date} (${d.data_freshness.days_old}d old) — ${d.data_freshness.is_fresh ? "fresh" : "stale"}</div></div>
-        <div class="score-box"><div class="label">Fundamental completeness</div><div>${d.fundamental_data_completeness_pct.toFixed(0)}%</div></div>
-        <div class="score-box"><div class="label">Technical completeness</div><div>${d.technical_data_completeness_pct.toFixed(0)}%</div></div>
-        <div class="score-box"><div class="label">Price</div><div>${d.price !== null ? "₹" + d.price.toFixed(2) : "—"}</div></div>
+        <div class="score-box"><div class="label">Data freshness</div><div class="value">${d.data_freshness.scan_date} (${d.data_freshness.days_old}d old) — ${d.data_freshness.is_fresh ? "fresh" : "stale"}</div></div>
+        <div class="score-box"><div class="label">Fundamental completeness</div><div class="value">${d.fundamental_data_completeness_pct.toFixed(0)}%</div></div>
+        <div class="score-box"><div class="label">Technical completeness</div><div class="value">${d.technical_data_completeness_pct.toFixed(0)}%</div></div>
+        <div class="score-box"><div class="label">Price</div><div class="value num">${d.price !== null ? "₹" + d.price.toFixed(2) : "—"}</div></div>
       </div>
     </div>
 
-    <div class="card">
-      <h3>Why selected?</h3>
-      <div class="why-block"><div class="q">Why this stock?</div><div class="a">${d.explanation.why_this_stock}</div></div>
-      <div class="why-block"><div class="q">Why now?</div><div class="a">${d.explanation.why_now}</div></div>
-      ${renderFactorList("What confirms", d.explanation.what_confirms.map((s) => ({ factor_name: "", reason: s })))}
-      ${renderFactorList("What has not been confirmed", d.explanation.what_has_not_been_confirmed.map((s) => ({ factor_name: "", reason: s })))}
-      ${renderFactorList("Risks", d.explanation.risks.map((s) => ({ factor_name: "", reason: s })))}
+    <div class="section-grid">
+      ${renderCompoundingOverview(d.compounding)}
+      ${renderTargetUpside(d.compounding)}
+      ${renderRiskStopLoss(d.compounding)}
+
+      <div class="card">
+        <h3>Scanner Discovery</h3>
+        <div class="source-row" style="margin-bottom:12px;">${sourceBadges(d.scanner_sources, d.scanner_confirmation_count)}</div>
+        <div class="score-row">
+          <div class="score-box"><div class="label">5paisa</div><div class="value">${d.scanner_sources.includes("5PAISA") ? "Found" : "Not found"}</div></div>
+          <div class="score-box"><div class="label">TradingView</div><div class="value">${d.scanner_sources.includes("TRADINGVIEW") ? "Found" : "Not found"}</div></div>
+          <div class="score-box"><div class="label">Confirmations</div><div class="value">${d.scanner_confirmation_count}</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Why This Candidate Qualified</h3>
+        <div class="why-block"><div class="q">Why this stock?</div><div class="a">${d.explanation.why_this_stock}</div></div>
+        <div class="why-block"><div class="q">Why now?</div><div class="a">${d.explanation.why_now}</div></div>
+        ${renderFactorList("What confirms", d.explanation.what_confirms.map((s) => ({ factor_name: "", reason: s })))}
+        ${renderFactorList("What has not been confirmed", d.explanation.what_has_not_been_confirmed.map((s) => ({ factor_name: "", reason: s })))}
+        ${renderFactorList("Risks", d.explanation.risks.map((s) => ({ factor_name: "", reason: s })))}
+      </div>
+
+      ${renderLimitations(d)}
     </div>
 
-    ${renderCategoryBreakdown("Technical Analysis", d.technical_breakdown)}
+    ${renderCategoryBreakdown("Technical Intelligence", d.technical_breakdown)}
     ${d.fundamental_score === null
-      ? `<div class="card"><h3>Fundamental Analysis</h3><div class="muted">${d.fundamental_unavailable_reason}</div></div>`
-      : renderCategoryBreakdown("Fundamental Analysis", d.fundamental_breakdown)}
+      ? `<div class="card"><h3>Fundamental Intelligence</h3><div class="muted">${d.fundamental_unavailable_reason}</div></div>`
+      : renderCategoryBreakdown("Fundamental Intelligence", d.fundamental_breakdown)}
     ${renderFieldSources(d.fundamental_field_sources)}
 
     <div class="card">
-      <h3>Decision Engine re-validation</h3>
+      <h3>Decision Engine Re-validation</h3>
       ${decisionRules}
+    </div>
+  `;
+}
+
+// ---------------- Admin -> Fundamental Queue ----------------
+
+async function loadFundamentalQueueStatus() {
+  const panel = $("#fundamental-queue-panel");
+  panel.innerHTML = `<div class="muted">Loading fundamental queue status…</div>`;
+  let s;
+  try {
+    s = await api("/admin/fundamental-queue");
+  } catch (e) {
+    panel.innerHTML = `<div class="error">${e.message}</div>`;
+    return;
+  }
+  const trendlynePill = pill(s.trendlyne_status === "HEALTHY" ? "PASS" : s.trendlyne_status === "RATE_LIMITED" ? "WARNING" : "UNKNOWN");
+  panel.innerHTML = `
+    <h3>Fundamental Queue</h3>
+    <div class="score-row">
+      <div class="score-box"><div class="label">Trendlyne Status</div><div class="value">${s.trendlyne_status} ${trendlynePill}</div></div>
+      <div class="score-box"><div class="label">Paused</div><div class="value">${s.is_paused ? "YES" : "NO"}</div></div>
+      <div class="score-box"><div class="label">Current Batch Size</div><div class="value num">${s.batch_size}</div></div>
+      <div class="score-box"><div class="label">Pending</div><div class="value num">${s.pending}</div></div>
+    </div>
+    <div class="score-row" style="margin-top:10px;">
+      <div class="score-box"><div class="label">Completed Today</div><div class="value num">${s.completed_today}</div></div>
+      <div class="score-box"><div class="label">Rate Limited Today</div><div class="value num">${s.rate_limited_today}</div></div>
+      <div class="score-box"><div class="label">Failed Today</div><div class="value num">${s.failed_today}</div></div>
+      <div class="score-box"><div class="label">Cached Today</div><div class="value num">${s.cached_today}</div></div>
+    </div>
+    <div class="score-row" style="margin-top:10px;">
+      <div class="score-box"><div class="label">Requests Today</div><div class="value num">${s.requests_today} / ${s.daily_budget}</div></div>
+      <div class="score-box"><div class="label">Last Trendlyne Request</div><div class="value">${fmtDate(s.last_request_at)}</div></div>
+      <div class="score-box"><div class="label">Resume After</div><div class="value">${s.paused_until ? fmtDate(s.paused_until) : "—"}</div></div>
     </div>
   `;
 }

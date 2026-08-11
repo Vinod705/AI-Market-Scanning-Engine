@@ -33,6 +33,11 @@ class ProviderSymbol(BaseModel):
     industry: str | None = None
     listing_date: datetime | None = None
     is_ipo: bool = False
+    # ISIN, when the provider's symbol master reports one — used only as a
+    # matching key for the IPO listing-date backfill (see
+    # scripts/backfill_ipo_listing_dates.py), never persisted on Symbol and
+    # never used to infer/fabricate a listing date itself.
+    isin: str | None = None
 
 
 class Quote(BaseModel):

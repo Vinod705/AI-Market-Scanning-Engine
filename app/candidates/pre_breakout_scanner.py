@@ -15,7 +15,6 @@ from app.candidates.models import AlertCategory, CandidateContext, SetupState, U
 from app.candidates.scanner_base import CandidateScannerBase
 from app.candidates.sources import CandidateSourceProvider
 from app.config.settings import Settings
-from app.fundamentals.provider import FundamentalDataProvider
 from app.models.symbol import Symbol
 from app.scanner.models import ScannerContext, ScanOutcome
 from app.universe.provider import UniverseProvider
@@ -27,10 +26,9 @@ class PreBreakoutScanner(CandidateScannerBase):
     def __init__(
         self,
         settings: Settings,
-        fundamental_provider: FundamentalDataProvider,
         source_providers: list[CandidateSourceProvider] | None = None,
     ) -> None:
-        super().__init__(settings, fundamental_provider, source_providers)
+        super().__init__(settings, source_providers)
         # Populated by `get_candidate_symbols` at the start of each scan
         # run; `build_context` reads it to resolve each symbol's universe
         # (IPO vs F&O) since this one scanner evaluates both.
@@ -48,7 +46,7 @@ class PreBreakoutScanner(CandidateScannerBase):
     async def get_candidate_symbols(
         self, session: AsyncSession, all_symbols: list[Symbol]
     ) -> list[Symbol]:
-        provider = UniverseProvider(session)
+        provider = UniverseProvider(session, self._settings)
         fno_symbols = await provider.get_fno_universe()
         ipo_symbols = await provider.get_ipo_universe()
         self._ipo_symbol_ids = {s.id for s in ipo_symbols}
@@ -66,7 +64,6 @@ class PreBreakoutScanner(CandidateScannerBase):
             universe=universe,
             scanner_name=self.name,
             session=session,
-            fundamental_provider=self._fundamental_provider,
             fundamental_scorer=self._fundamental_scorer,
             technical_scorer=self._technical_scorer,
             settings=self._settings,

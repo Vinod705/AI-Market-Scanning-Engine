@@ -179,4 +179,4 @@ class NotificationManager:
                 timestamp=alert.created_at,
             )
 
-        return AlertMessageFormatter.format_text(context)
+        return AlertMessageFormatter.format_text(context, self._settings)

@@ -308,9 +308,11 @@ alert_delivery_logs + alert_events (full audit trail) + Alert.status (SENT/FAILE
 
 ## Dashboard, auth, and the F&O/IPO explainability API (Phase 6)
 
+**Live dashboard:** https://marketintel.129.225.91.54.nip.io/dashboard — publicly-trusted HTTPS (Let's Encrypt, no browser warning). The bare IP (`https://129.225.91.54/`) still works too, via a self-signed cert — see "HTTPS / nginx" below.
+
 ```
 Browser
-   │  HTTPS (nginx, self-signed cert — see "HTTPS / nginx" below)
+   │  HTTPS (nginx — see "HTTPS / nginx" below)
    ▼
 GET /dashboard  →  app/web/dashboard.html (vanilla JS, no build step)
    │
@@ -328,7 +330,12 @@ GET /dashboard  →  app/web/dashboard.html (vanilla JS, no build step)
 
 ### HTTPS / nginx
 
-The app itself is plain HTTP on `:8000`; nginx terminates TLS in front of it (self-signed cert, since the deployment doesn't have a domain name — Let's Encrypt can't issue a certificate for a bare IP). Config: `/etc/nginx/sites-available/market-intel.conf` on the VM, cert at `/etc/nginx/ssl/market-intel-selfsigned.crt`. `SESSION_COOKIE_SECURE=true` (the default) means dashboard login only works over HTTPS — a real browser won't send a `Secure` cookie back over plain HTTP.
+The app itself is plain HTTP on `:8000`; nginx terminates TLS in front of it. Config: `/etc/nginx/sites-available/market-intel.conf` on the VM. Two hostnames are served, each with its own certificate (nginx picks the right one via SNI):
+
+- **`marketintel.129.225.91.54.nip.io`** — a free [nip.io](https://nip.io) hostname that resolves to the VM's IP (no domain purchase needed), fronted by a **real, publicly-trusted Let's Encrypt certificate** (`/etc/letsencrypt/live/marketintel.129.225.91.54.nip.io/`, auto-renewed by certbot's systemd timer). This is the recommended URL — no certificate warning.
+- **`129.225.91.54`** (bare IP) — kept working as a fallback via the original **self-signed** cert (`/etc/nginx/ssl/market-intel-selfsigned.crt`), since Let's Encrypt cannot issue certificates for bare IP addresses. Browsers will show the usual self-signed warning here.
+
+`SESSION_COOKIE_SECURE=true` (the default) means dashboard login only works over HTTPS — a real browser won't send a `Secure` cookie back over plain HTTP.
 
 ## Running with Docker (recommended)
 

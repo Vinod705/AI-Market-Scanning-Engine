@@ -20,7 +20,6 @@ from app.candidates.models import Universe
 from app.candidates.sources import CandidateSourceProvider, ScannerSource, TradingViewSourceProvider
 from app.config.settings import Settings
 from app.fundamentals.scorer import FundamentalScorer
-from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProvider
 from app.providers.base_provider import Candle, ProviderSymbol
 from app.repositories.feature_repository import DailyFeatureRepository
 from app.repositories.fno_universe_repository import FnoUniverseRepository
@@ -110,7 +109,6 @@ async def test_build_candidate_defaults_to_5paisa_only(
             universe=Universe.FNO,
             scanner_name="fno_momentum_v1",
             session=session,
-            fundamental_provider=UnavailableFundamentalDataProvider(),
             fundamental_scorer=FundamentalScorer(settings),
             technical_scorer=TechnicalScorer(settings),
             settings=settings,
@@ -133,7 +131,6 @@ async def test_build_candidate_merges_second_source_when_it_flags_the_symbol(
             universe=Universe.FNO,
             scanner_name="fno_momentum_v1",
             session=session,
-            fundamental_provider=UnavailableFundamentalDataProvider(),
             fundamental_scorer=FundamentalScorer(settings),
             technical_scorer=TechnicalScorer(settings),
             settings=settings,
@@ -157,7 +154,6 @@ async def test_build_candidate_does_not_add_source_that_did_not_flag_symbol(
             universe=Universe.FNO,
             scanner_name="fno_momentum_v1",
             session=session,
-            fundamental_provider=UnavailableFundamentalDataProvider(),
             fundamental_scorer=FundamentalScorer(settings),
             technical_scorer=TechnicalScorer(settings),
             settings=settings,
@@ -180,7 +176,6 @@ async def test_scanner_sources_persisted_in_feature_snapshot(
             universe=Universe.FNO,
             scanner_name="fno_momentum_v1",
             session=session,
-            fundamental_provider=UnavailableFundamentalDataProvider(),
             fundamental_scorer=FundamentalScorer(settings),
             technical_scorer=TechnicalScorer(settings),
             settings=settings,
@@ -205,11 +200,7 @@ async def test_dual_source_discovery_produces_one_row_not_two(
     settings = Settings()
     fake_source = _FakeAlwaysFindsProvider()
     registry = ScannerRegistry()
-    registry.register(
-        FnoMomentumScanner(
-            settings, UnavailableFundamentalDataProvider(), source_providers=[fake_source]
-        )
-    )
+    registry.register(FnoMomentumScanner(settings, source_providers=[fake_source]))
     engine = ScannerEngine(session_factory, registry)
     result = await engine.run_all()
 

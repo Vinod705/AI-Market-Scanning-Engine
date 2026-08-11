@@ -92,6 +92,12 @@ class StockCandidate:
     # `fundamental_factors` (the scored breakdown): this is about WHERE a
     # raw input came from, not how it was judged.
     fundamental_field_sources: list[dict[str, object]] = field(default_factory=list)
+    # PENDING | PROCESSING | SUCCESS | RATE_LIMITED | FAILED | CACHED — see
+    # `app.fundamentals.queue_models.FetchStatus`. Always PENDING when a
+    # candidate is first built (build_candidate never fetches fundamentals
+    # itself); the Fundamental Queue updates this directly on the persisted
+    # row once it processes the symbol.
+    fundamental_status: str = "PENDING"
     # Raw technical feature values (ema20, adx14, relative_volume, ...) —
     # merged into the persisted snapshot alongside everything above.
     technical_feature_snapshot: dict[str, object] = field(default_factory=dict)
@@ -120,6 +126,7 @@ class StockCandidate:
                 "fundamental_factors": list(self.fundamental_factors),
                 "technical_factors": list(self.technical_factors),
                 "fundamental_field_sources": list(self.fundamental_field_sources),
+                "fundamental_status": self.fundamental_status,
                 "risk_flags": list(self.risk_flags),
                 "data_completeness_pct": self.data_completeness_pct,
                 "technical_data_completeness_pct": self.technical_data_completeness_pct,

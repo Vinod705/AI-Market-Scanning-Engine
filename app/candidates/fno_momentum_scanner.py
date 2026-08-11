@@ -26,7 +26,7 @@ class FnoMomentumScanner(CandidateScannerBase):
     async def get_candidate_symbols(
         self, session: AsyncSession, all_symbols: list[Symbol]
     ) -> list[Symbol]:
-        return await UniverseProvider(session).get_fno_universe()
+        return await UniverseProvider(session, self._settings).get_fno_universe()
 
     def scan(self, context: ScannerContext) -> ScanOutcome:
         assert isinstance(context, CandidateContext)

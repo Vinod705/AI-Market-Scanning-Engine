@@ -1,60 +1,178 @@
 """Tests for app.universe.provider.UniverseProvider and FnoUniverseRepository."""
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.config.settings import Settings
 from app.providers.base_provider import ProviderSymbol
-from app.repositories.feature_repository import DailyFeatureRepository
 from app.repositories.fno_universe_repository import FnoUniverseRepository
 from app.repositories.market_repository import SymbolRepository
 from app.universe.provider import UniverseProvider
 
+_DAYS_PER_YEAR = 365
 
-async def test_get_ipo_universe_returns_symbols_with_latest_ipo_base_flag(
+
+async def _seed_symbol_with_listing_date(
     session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with session_factory() as session:
-        ipo_symbol = await SymbolRepository(session).upsert(
-            ProviderSymbol(symbol="FRESHCO", exchange="N", instrument_token="1")
-        )
-        other_symbol = await SymbolRepository(session).upsert(
-            ProviderSymbol(symbol="OLDCO", exchange="N", instrument_token="2")
-        )
-        await session.commit()
-
-        feature_repo = DailyFeatureRepository(session)
-        await feature_repo.upsert(ipo_symbol.id, date(2026, 1, 5), {"pattern_ipo_base": True})
-        await feature_repo.upsert(other_symbol.id, date(2026, 1, 5), {"pattern_ipo_base": False})
-        await session.commit()
-
-    async with session_factory() as session:
-        universe = await UniverseProvider(session).get_ipo_universe()
-
-    symbols = {s.symbol for s in universe}
-    assert symbols == {"FRESHCO"}
-
-
-async def test_get_ipo_universe_uses_only_the_latest_date_per_symbol(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """A symbol that *used to* look like an IPO base but no longer does
-    (its latest row says False) should drop out of the universe."""
+    *,
+    symbol_name: str,
+    listing_date: date | None,
+    is_active: bool = True,
+) -> int:
+    """Creates `symbol_name` with a real `Symbol.listing_date` set directly
+    -- no daily_prices involved at all, since IPO-universe membership no
+    longer depends on local price history in any way."""
     async with session_factory() as session:
         symbol = await SymbolRepository(session).upsert(
-            ProviderSymbol(symbol="GROWNUP", exchange="N", instrument_token="1")
+            ProviderSymbol(
+                symbol=symbol_name,
+                exchange="N",
+                instrument_token=symbol_name,
+                listing_date=(
+                    datetime.combine(listing_date, datetime.min.time())
+                    if listing_date is not None
+                    else None
+                ),
+            )
         )
+        if not is_active:
+            symbol.is_active = False
         await session.commit()
+        return symbol.id
 
-        feature_repo = DailyFeatureRepository(session)
-        await feature_repo.upsert(symbol.id, date(2026, 1, 1), {"pattern_ipo_base": True})
-        await feature_repo.upsert(symbol.id, date(2026, 1, 5), {"pattern_ipo_base": False})
-        await session.commit()
+
+async def test_get_ipo_universe_includes_a_stock_listed_10_days_ago(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The production scenario (MANIPALHOS et al.) that both the old
+    pattern_ipo_base proxy and the intermediate bar-count proxy handled
+    only by accident -- a real listing date handles it directly."""
+    await _seed_symbol_with_listing_date(
+        session_factory, symbol_name="MANIPALHOS", listing_date=date.today() - timedelta(days=10)
+    )
 
     async with session_factory() as session:
-        universe = await UniverseProvider(session).get_ipo_universe()
+        universe = await UniverseProvider(session, Settings()).get_ipo_universe()
+
+    assert {s.symbol for s in universe} == {"MANIPALHOS"}
+
+
+async def test_get_ipo_universe_includes_a_stock_listed_1_year_ago(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The core bug this redesign fixes: a 1-year-old IPO must still be
+    evaluated, not just ones a few weeks old."""
+    await _seed_symbol_with_listing_date(
+        session_factory,
+        symbol_name="ONEYEARCO",
+        listing_date=date.today() - timedelta(days=_DAYS_PER_YEAR),
+    )
+
+    async with session_factory() as session:
+        universe = await UniverseProvider(session, Settings()).get_ipo_universe()
+
+    assert {s.symbol for s in universe} == {"ONEYEARCO"}
+
+
+async def test_get_ipo_universe_includes_a_stock_listed_2_years_ago(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_symbol_with_listing_date(
+        session_factory,
+        symbol_name="TWOYEARCO",
+        listing_date=date.today() - timedelta(days=2 * _DAYS_PER_YEAR),
+    )
+
+    async with session_factory() as session:
+        universe = await UniverseProvider(session, Settings()).get_ipo_universe()
+
+    assert {s.symbol for s in universe} == {"TWOYEARCO"}
+
+
+async def test_get_ipo_universe_includes_a_stock_at_exactly_the_age_boundary(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Boundary is inclusive: listing_date == today - N years is IN."""
+    settings = Settings()
+    cutoff = date.today() - timedelta(days=_DAYS_PER_YEAR * settings.ipo_universe_max_age_years)
+    await _seed_symbol_with_listing_date(session_factory, symbol_name="EDGECO", listing_date=cutoff)
+
+    async with session_factory() as session:
+        universe = await UniverseProvider(session, settings).get_ipo_universe()
+
+    assert {s.symbol for s in universe} == {"EDGECO"}
+
+
+async def test_get_ipo_universe_excludes_a_stock_just_outside_the_age_boundary(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    settings = Settings()
+    just_outside = date.today() - timedelta(
+        days=_DAYS_PER_YEAR * settings.ipo_universe_max_age_years + 1
+    )
+    await _seed_symbol_with_listing_date(
+        session_factory, symbol_name="OLDCO", listing_date=just_outside
+    )
+
+    async with session_factory() as session:
+        universe = await UniverseProvider(session, settings).get_ipo_universe()
 
     assert universe == []
+
+
+async def test_get_ipo_universe_excludes_a_stock_with_null_listing_date(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Unmatched/unbackfilled symbols (listing_date NULL) are correctly
+    excluded, not guessed into the universe."""
+    await _seed_symbol_with_listing_date(
+        session_factory, symbol_name="UNBACKFILLED", listing_date=None
+    )
+
+    async with session_factory() as session:
+        universe = await UniverseProvider(session, Settings()).get_ipo_universe()
+
+    assert universe == []
+
+
+async def test_get_ipo_universe_excludes_an_inactive_symbol_even_with_recent_listing_date(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_symbol_with_listing_date(
+        session_factory,
+        symbol_name="INACTIVECO",
+        listing_date=date.today() - timedelta(days=10),
+        is_active=False,
+    )
+
+    async with session_factory() as session:
+        universe = await UniverseProvider(session, Settings()).get_ipo_universe()
+
+    assert universe == []
+
+
+async def test_get_ipo_universe_age_window_is_configurable(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A 4-year-old stock is excluded under the default 3-year window but
+    included once the setting is widened -- confirms the 3 isn't
+    hard-coded anywhere in the query."""
+    await _seed_symbol_with_listing_date(
+        session_factory,
+        symbol_name="FOURYEARCO",
+        listing_date=date.today() - timedelta(days=4 * _DAYS_PER_YEAR),
+    )
+
+    async with session_factory() as session:
+        default_universe = await UniverseProvider(session, Settings()).get_ipo_universe()
+    assert default_universe == []
+
+    async with session_factory() as session:
+        widened_universe = await UniverseProvider(
+            session, Settings(ipo_universe_max_age_years=5)
+        ).get_ipo_universe()
+    assert {s.symbol for s in widened_universe} == {"FOURYEARCO"}
 
 
 async def test_get_fno_universe_returns_symbols_from_fno_universe_table(
@@ -73,7 +191,7 @@ async def test_get_fno_universe_returns_symbols_from_fno_universe_table(
         await session.commit()
 
     async with session_factory() as session:
-        universe = await UniverseProvider(session).get_fno_universe()
+        universe = await UniverseProvider(session, Settings()).get_fno_universe()
 
     assert [s.symbol for s in universe] == ["RELIANCE"]
 
@@ -111,7 +229,7 @@ async def test_get_listed_universe_matches_active_symbols(
         await session.commit()
 
     async with session_factory() as session:
-        universe = await UniverseProvider(session).get_listed_universe()
+        universe = await UniverseProvider(session, Settings()).get_listed_universe()
         active = await SymbolRepository(session).list_active()
 
     assert {s.symbol for s in universe} == {s.symbol for s in active}

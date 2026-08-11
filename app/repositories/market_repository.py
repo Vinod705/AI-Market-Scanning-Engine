@@ -5,9 +5,10 @@ session directly, keeping persistence concerns out of business logic.
 """
 
 from datetime import date as date_
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collector_log import CollectorLog
@@ -138,6 +139,24 @@ class PriceRepository:
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return list(reversed(rows))
+
+    async def get_52_week_high_low(self, symbol_id: int) -> tuple[Decimal, Decimal] | None:
+        """(highest `high`, lowest `low`) over the trailing 52 weeks (365
+        calendar days) of `daily_prices` for `symbol_id`. Deliberately NOT
+        "since listing": our local daily_prices history is only ~400 days
+        deep (bounded by FivePaisaProvider's fetch window), so an unbounded
+        aggregate would silently just be a ~400-day figure for any stock
+        older than that — an explicit, bounded 52-week window is honest
+        about what this data can actually support. None if the symbol has
+        no daily bars in the window."""
+        window_start = date_.today() - timedelta(days=365)
+        stmt = select(func.max(DailyPrice.high), func.min(DailyPrice.low)).where(
+            DailyPrice.symbol_id == symbol_id, DailyPrice.date >= window_start
+        )
+        high, low = (await self._session.execute(stmt)).one()
+        if high is None or low is None:
+            return None
+        return high, low
 
     async def get_intraday_for_date(self, symbol_id: int, day: date_) -> list[IntradayPrice]:
         """All intraday bars for `symbol_id` on `day`, oldest first."""

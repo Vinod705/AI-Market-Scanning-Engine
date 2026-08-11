@@ -1,6 +1,6 @@
 """Tests for the market data ORM models and repository layer."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -64,6 +64,117 @@ async def test_price_repository_upsert_daily_avoids_duplicates(
         rows = (await session.execute(DailyPrice.__table__.select())).fetchall()
         assert len(rows) == 1
         assert float(rows[0].close) == 103
+
+
+async def test_price_repository_get_52_week_high_low_returns_max_high_min_low(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    today = date.today()
+    async with session_factory() as session:
+        symbol = await SymbolRepository(session).upsert(
+            ProviderSymbol(symbol="NEWCO", exchange="N", instrument_token="1")
+        )
+        await session.commit()
+
+        price_repo = PriceRepository(session)
+        await price_repo.upsert_daily_many(
+            symbol.id,
+            [
+                Candle(
+                    timestamp=datetime.combine(today - timedelta(days=3), datetime.min.time()),
+                    open=100,
+                    high=110,
+                    low=95,
+                    close=105,
+                    volume=1000,
+                ),
+                Candle(
+                    timestamp=datetime.combine(today - timedelta(days=2), datetime.min.time()),
+                    open=105,
+                    high=130,
+                    low=90,
+                    close=120,
+                    volume=1000,
+                ),
+                Candle(
+                    timestamp=datetime.combine(today - timedelta(days=1), datetime.min.time()),
+                    open=120,
+                    high=125,
+                    low=115,
+                    close=118,
+                    volume=1000,
+                ),
+            ],
+        )
+        await session.commit()
+
+        high_low = await price_repo.get_52_week_high_low(symbol.id)
+
+    assert high_low is not None
+    high, low = high_low
+    assert float(high) == 130  # max of 110, 130, 125
+    assert float(low) == 90  # min of 95, 90, 115
+
+
+async def test_price_repository_get_52_week_high_low_ignores_bars_outside_the_window(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A bar older than 365 days must not count toward the 52-week
+    high/low -- this is the entire point of bounding the window instead
+    of aggregating unbounded over daily_prices."""
+    today = date.today()
+    async with session_factory() as session:
+        symbol = await SymbolRepository(session).upsert(
+            ProviderSymbol(symbol="OLDBARCO", exchange="N", instrument_token="1")
+        )
+        await session.commit()
+
+        price_repo = PriceRepository(session)
+        await price_repo.upsert_daily_many(
+            symbol.id,
+            [
+                # Outside the window: an extreme high/low that must be ignored.
+                Candle(
+                    timestamp=datetime.combine(today - timedelta(days=400), datetime.min.time()),
+                    open=500,
+                    high=999,
+                    low=1,
+                    close=500,
+                    volume=1000,
+                ),
+                # Inside the window.
+                Candle(
+                    timestamp=datetime.combine(today - timedelta(days=10), datetime.min.time()),
+                    open=100,
+                    high=120,
+                    low=90,
+                    close=110,
+                    volume=1000,
+                ),
+            ],
+        )
+        await session.commit()
+
+        high_low = await price_repo.get_52_week_high_low(symbol.id)
+
+    assert high_low is not None
+    high, low = high_low
+    assert float(high) == 120
+    assert float(low) == 90
+
+
+async def test_price_repository_get_52_week_high_low_returns_none_for_no_bars(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        symbol = await SymbolRepository(session).upsert(
+            ProviderSymbol(symbol="NOBARS", exchange="N", instrument_token="1")
+        )
+        await session.commit()
+
+        high_low = await PriceRepository(session).get_52_week_high_low(symbol.id)
+
+    assert high_low is None
 
 
 async def test_market_status_repository_upsert_singleton(

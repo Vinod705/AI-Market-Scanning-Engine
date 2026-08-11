@@ -56,13 +56,22 @@ def _parse_sse_json(body: str) -> dict[str, Any]:
 
 class TrendlyneMcpClient:
     def __init__(
-        self, mcp_url: str, timeout_seconds: float, client: httpx.AsyncClient | None = None
+        self,
+        mcp_url: str,
+        timeout_seconds: float,
+        client: httpx.AsyncClient | None = None,
+        health_check_timeout_seconds: float = 2.0,
     ) -> None:
         self._mcp_url = mcp_url
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds),
             headers={"User-Agent": _USER_AGENT},
         )
+        # Deliberately separate from `timeout_seconds` above: health_check()
+        # backs /health, which must stay fast even when Trendlyne is
+        # unreachable — never the same budget as a real data fetch. See
+        # health_check()'s docstring.
+        self._health_check_timeout_seconds = health_check_timeout_seconds
         self._request_id = 0
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
@@ -139,7 +148,13 @@ class TrendlyneMcpClient:
 
     async def health_check(self) -> bool:
         """A cheap `tools/list` call — used only to report /health status,
-        never logs the URL/token."""
+        never logs the URL/token. Uses `health_check_timeout_seconds`
+        (short, e.g. 2s) instead of the client's normal data-fetch
+        timeout (e.g. 20s) — this is what keeps /health fast, and Docker's
+        own 5s container healthcheck passing, even when Trendlyne is
+        unreachable. A timeout here is caught below and reported as
+        unhealthy (False), exactly like any other transport failure —
+        never left to hang or propagate."""
         self._request_id += 1
         request_body = {"jsonrpc": "2.0", "id": self._request_id, "method": "tools/list"}
         try:
@@ -147,6 +162,7 @@ class TrendlyneMcpClient:
                 self._mcp_url,
                 json=request_body,
                 headers={"Content-Type": "application/json", "Accept": _ACCEPT},
+                timeout=self._health_check_timeout_seconds,
             )
             if response.status_code != 200:
                 return False

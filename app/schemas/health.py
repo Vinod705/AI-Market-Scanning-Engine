@@ -16,3 +16,13 @@ class HealthResponse(BaseModel):
     telegram_fno: str = "unknown"
     tradingview: str = "unknown"
     trendlyne_mcp: str = "unknown"
+    fundamental_queue: str = "unknown"
+    # OS-level resource snapshot for the dashboard's health strip (see
+    # app.core.system_metrics) — None when unavailable, never fabricated.
+    cpu_percent: float | None = None
+    memory_used_mb: float | None = None
+    memory_total_mb: float | None = None
+    memory_percent: float | None = None
+    disk_used_gb: float | None = None
+    disk_total_gb: float | None = None
+    disk_percent: float | None = None

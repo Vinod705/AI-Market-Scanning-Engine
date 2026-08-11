@@ -335,6 +335,67 @@ async def test_health_check_false_on_error() -> None:
     assert await client.health_check() is False
 
 
+async def test_health_check_returns_false_on_timeout_without_raising() -> None:
+    """A slow/unreachable Trendlyne must degrade health_check() to False,
+    never raise or hang — this is what keeps /health itself from hanging
+    when Trendlyne is down."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("timed out")
+
+    client = _client(handler)
+    assert await client.health_check() is False
+
+
+async def test_health_check_uses_its_own_short_timeout_not_the_fetch_timeout() -> None:
+    """The regression this fix targets: health_check() must request with
+    `health_check_timeout_seconds`, completely independent of the much
+    longer `timeout_seconds` used for real data fetches (call_tool)."""
+    from unittest.mock import AsyncMock, patch
+
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(200, text="event: message\ndata: {}\n\n")
+    )
+    async_client = httpx.AsyncClient(transport=transport)
+    client = TrendlyneMcpClient(
+        mcp_url="https://mcp.trendlyne.com/mcp?token=test-token",
+        timeout_seconds=20.0,
+        client=async_client,
+        health_check_timeout_seconds=2.0,
+    )
+
+    with patch.object(async_client, "post", new=AsyncMock(wraps=async_client.post)) as mock_post:
+        await client.health_check()
+
+    assert mock_post.call_args.kwargs["timeout"] == 2.0
+    assert mock_post.call_args.kwargs["timeout"] != 20.0
+
+
+async def test_call_tool_is_unaffected_by_the_health_check_timeout() -> None:
+    """The real fetch path (call_tool) must never be capped by the short
+    health-check timeout — it keeps using the client's normal timeout."""
+    from unittest.mock import AsyncMock, patch
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_sse_body(1, _SAMPLE_OVERVIEW_TEXT))
+
+    transport = httpx.MockTransport(handler)
+    async_client = httpx.AsyncClient(transport=transport)
+    client = TrendlyneMcpClient(
+        mcp_url="https://mcp.trendlyne.com/mcp?token=test-token",
+        timeout_seconds=20.0,
+        client=async_client,
+        health_check_timeout_seconds=2.0,
+    )
+
+    with patch.object(async_client, "post", new=AsyncMock(wraps=async_client.post)) as mock_post:
+        await client.call_tool("get_overview_news_corp_events", {"stock_code": "TCS"})
+
+    # call_tool() never passes a per-request timeout override — it relies
+    # on the client's own configured (long) default, unlike health_check().
+    assert "timeout" not in mock_post.call_args.kwargs
+
+
 # --- TrendlyneFundamentalDataProvider ------------------------------------
 
 
@@ -391,6 +452,15 @@ async def test_get_fundamentals_does_not_cache_failures() -> None:
     await provider.get_fundamentals("TCS")
 
     assert call_count == 2
+
+
+def test_provider_wires_settings_health_check_timeout_into_the_client() -> None:
+    """Construction-level check that the configured
+    trendlyne_health_check_timeout_seconds setting actually reaches the
+    underlying TrendlyneMcpClient — not just the default."""
+    settings = _settings(trendlyne_health_check_timeout_seconds=3.5)
+    provider = TrendlyneFundamentalDataProvider(settings)
+    assert provider._client._health_check_timeout_seconds == 3.5
 
 
 async def test_health_check_reflects_mcp_status() -> None:

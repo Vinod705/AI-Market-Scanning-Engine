@@ -10,8 +10,10 @@ the test client, which doesn't run the lifespan) degrades gracefully to
 
 from fastapi import APIRouter, Request
 
+from app.core.system_metrics import get_system_metrics
 from app.database.session import check_database_connection
 from app.fundamentals.provider import FundamentalDataProvider
+from app.fundamentals.queue_service import FundamentalQueueService
 from app.fundamentals.trendlyne_provider import TrendlyneFundamentalDataProvider
 from app.notifications.telegram import TelegramProvider
 from app.schemas.health import HealthResponse
@@ -63,6 +65,17 @@ async def health_check(request: Request) -> HealthResponse:
 
     trendlyne_mcp = await _trendlyne_status(getattr(state, "trendlyne_provider", None))
 
+    fundamental_queue = "not_configured"
+    queue_service = getattr(state, "fundamental_queue", None)
+    if isinstance(queue_service, FundamentalQueueService):
+        try:
+            summary = await queue_service.get_status_summary()
+            fundamental_queue = "rate_limited" if summary.is_paused else "healthy"
+        except Exception:  # noqa: BLE001 - a health check must never itself raise
+            fundamental_queue = "unhealthy"
+
+    metrics = await get_system_metrics()
+
     return HealthResponse(
         status="healthy" if database == "healthy" else "degraded",
         database=database,
@@ -76,4 +89,12 @@ async def health_check(request: Request) -> HealthResponse:
         telegram_fno=telegram_fno,
         tradingview=tradingview,
         trendlyne_mcp=trendlyne_mcp,
+        fundamental_queue=fundamental_queue,
+        cpu_percent=metrics.cpu_percent,
+        memory_used_mb=metrics.memory_used_mb,
+        memory_total_mb=metrics.memory_total_mb,
+        memory_percent=metrics.memory_percent,
+        disk_used_gb=metrics.disk_used_gb,
+        disk_total_gb=metrics.disk_total_gb,
+        disk_percent=metrics.disk_percent,
     )

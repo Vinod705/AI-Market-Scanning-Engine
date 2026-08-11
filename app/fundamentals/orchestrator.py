@@ -19,11 +19,26 @@ that symbol — never lets one source's bug take down the others.
 """
 
 from dataclasses import fields
+from typing import Protocol, runtime_checkable
 
 from loguru import logger
 
 from app.fundamentals.models import FieldAvailability, FieldSnapshot, FundamentalData
 from app.fundamentals.provider import FundamentalDataProvider
+from app.fundamentals.queue_models import FetchStatus
+
+
+@runtime_checkable
+class StatusAwareFundamentalProvider(Protocol):
+    """Providers that can distinguish *why* a fetch produced no data (rate
+    limit vs. genuine failure vs. cache hit) implement this in addition to
+    the plain `FundamentalDataProvider` interface — only the Fundamental
+    Queue needs the distinction, so it's kept out of the base ABC."""
+
+    async def get_fundamentals_with_status(
+        self, symbol: str
+    ) -> tuple[FundamentalData | None, FetchStatus, str | None]: ...
+
 
 _NON_MERGEABLE_FIELDS = {"symbol", "as_of", "risk_notes", "field_snapshots"}
 _MERGEABLE_FIELDS = [f.name for f in fields(FundamentalData) if f.name not in _NON_MERGEABLE_FIELDS]
@@ -63,6 +78,52 @@ class MultiSourceFundamentalProvider(FundamentalDataProvider):
 
         merged.risk_notes = _merge_risk_notes(results)
         return merged
+
+    async def get_fundamentals_with_status(
+        self, symbol: str
+    ) -> tuple[FundamentalData | None, FetchStatus, str | None]:
+        """Used by the Fundamental Queue instead of `get_fundamentals()` so
+        it can tell a rate limit apart from "no data" and pause instead of
+        continuing to hammer the source. Tries each provider in priority
+        order; a RATE_LIMITED result from a higher-priority source doesn't
+        stop a lower-priority one from being tried (a different source may
+        not be rate-limited at all) — but if every provider reports the
+        same rate-limited condition, that's what's returned so the queue
+        pauses rather than treating it as a plain data gap."""
+        worst_status = FetchStatus.FAILED
+        last_error: str | None = None
+        for provider in self._providers:
+            if isinstance(provider, StatusAwareFundamentalProvider):
+                try:
+                    data, status, error = await provider.get_fundamentals_with_status(symbol)
+                except (
+                    Exception
+                ) as exc:  # noqa: BLE001 - one source's bug must never break the rest
+                    logger.warning(
+                        "{provider} raised while fetching {symbol}: {error}",
+                        provider=provider.name,
+                        symbol=symbol,
+                        error=exc,
+                    )
+                    status, error = FetchStatus.FAILED, str(exc)
+                    data = None
+            else:
+                try:
+                    data = await provider.get_fundamentals(symbol)
+                    status, error = (
+                        (FetchStatus.SUCCESS, None)
+                        if data is not None
+                        else (FetchStatus.FAILED, None)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    data, status, error = None, FetchStatus.FAILED, str(exc)
+
+            if data is not None:
+                return data, status, error
+            if status == FetchStatus.RATE_LIMITED:
+                worst_status, last_error = status, error
+
+        return None, worst_status, last_error
 
 
 def _merge_field(
