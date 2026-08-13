@@ -44,8 +44,9 @@ from app.notifications.router import NotificationRouter
 from app.notifications.telegram import TelegramProvider
 from app.pipeline.queue import RedisPipelineEventQueue
 from app.pipeline.worker import PipelineWorker
-from app.providers.base_provider import ProviderError
+from app.providers.base_provider import MarketDataProvider, ProviderError
 from app.providers.fivepaisa_provider import FivePaisaProvider
+from app.providers.upstox_provider import UpstoxProvider
 from app.scanner.breakout_scanner import BreakoutScanner
 from app.scanner.engine import ScannerEngine
 from app.scanner.scanner_registry import ScannerRegistry
@@ -76,16 +77,58 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("Redis not reachable at startup — dashboard login will fail until it is")
 
-    provider = FivePaisaProvider(settings)
-    if settings.fivepaisa_configured:
-        try:
-            await provider.connect()
-        except ProviderError as exc:
-            logger.warning("5paisa provider not connected at startup: {error}", error=exc)
+    # Phase 2: Upstox is the primary MarketDataProvider by default (see
+    # Settings.active_market_data_provider); FivePaisa stays fully supported
+    # as the legacy/secondary option, selectable via env var. Whichever is
+    # primary is the only one passed to MarketDataCollector — collector.py
+    # depends only on the MarketDataProvider ABC, so this swap needs no
+    # changes there.
+    provider: MarketDataProvider
+    if settings.active_market_data_provider == "upstox":
+        provider = UpstoxProvider(settings)
+        if settings.upstox_configured:
+            try:
+                await provider.connect()
+            except ProviderError as exc:
+                logger.warning("Upstox provider not connected at startup: {error}", error=exc)
+        else:
+            logger.warning(
+                "Upstox access token not configured — market data jobs will fail until it is"
+            )
     else:
-        logger.warning(
-            "5paisa credentials not configured — market data jobs will fail until they are"
-        )
+        provider = FivePaisaProvider(settings)
+        if settings.fivepaisa_configured:
+            try:
+                await provider.connect()
+            except ProviderError as exc:
+                logger.warning("5paisa provider not connected at startup: {error}", error=exc)
+        else:
+            logger.warning(
+                "5paisa credentials not configured — market data jobs will fail until they are"
+            )
+
+    # app.scheduler.universe_jobs derives F&O underlying roots from 5paisa's
+    # scrip master specifically (FivePaisaProvider.get_fno_symbol_roots — not
+    # part of the MarketDataProvider ABC, and Upstox's equivalent field
+    # hasn't been verified, so it isn't guessed at here). This stays
+    # 5paisa-backed regardless of which provider is primary above; when
+    # 5paisa *is* primary this constructs a second instance, which is a
+    # deliberate, low-cost tradeoff to avoid a riskier interface change.
+    fivepaisa_provider_for_universe = (
+        provider if isinstance(provider, FivePaisaProvider) else FivePaisaProvider(settings)
+    )
+    if fivepaisa_provider_for_universe is not provider:
+        if settings.fivepaisa_configured:
+            try:
+                await fivepaisa_provider_for_universe.connect()
+            except ProviderError as exc:
+                logger.warning(
+                    "5paisa provider (F&O universe) not connected at startup: {error}", error=exc
+                )
+        else:
+            logger.warning(
+                "5paisa credentials not configured — F&O universe refresh will fail until they are"
+            )
 
     market_updater = MarketStatusUpdater(AsyncSessionLocal)
     collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater)
@@ -207,7 +250,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     scheduler_service = get_scheduler_service(settings)
     register_market_data_jobs(scheduler_service, collector, pipeline_queue)
-    register_universe_jobs(scheduler_service, provider, AsyncSessionLocal)
+    register_universe_jobs(scheduler_service, fivepaisa_provider_for_universe, AsyncSessionLocal)
     register_fundamental_queue_jobs(scheduler_service, fundamental_queue)
     register_alert_jobs(scheduler_service, AsyncSessionLocal)
     register_digest_jobs(
@@ -251,6 +294,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         with contextlib.suppress(asyncio.CancelledError):
             await task
     await provider.disconnect()
+    if fivepaisa_provider_for_universe is not provider:
+        await fivepaisa_provider_for_universe.disconnect()
     await dispose_engine()
     await dispose_redis()
     logger.info("Shutdown complete")

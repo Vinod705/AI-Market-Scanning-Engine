@@ -3,6 +3,7 @@
 from datetime import time
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -109,6 +110,36 @@ class Settings(BaseSettings):
     # ~400 calendar days comfortably covers 200+ trading days (accounting for
     # weekends/holidays), which downstream features like ema200 require.
     fivepaisa_daily_history_days: int = 400
+
+    # --- Upstox provider (Phase 2 — primary by default, see active_market_data_provider) ---
+    # api_key/api_secret/redirect_uri are for a future out-of-band OAuth2
+    # authorization-code exchange helper — Upstox's own docs say headless/
+    # unattended login isn't supported (browser interaction required), so
+    # connect() itself uses a pre-obtained access_token, not these.
+    upstox_api_key: str = ""
+    upstox_api_secret: str = ""
+    upstox_redirect_uri: str = ""
+    upstox_access_token: str = ""
+    upstox_base_url: str = "https://api.upstox.com/v2"
+    # Public, unauthenticated NSE equities instruments master (see
+    # https://upstox.com/developer/api-documentation/instruments/).
+    upstox_instruments_url: str = (
+        "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
+    )
+    upstox_request_timeout: float = 30.0
+    upstox_max_retries: int = 3
+    upstox_retry_backoff_seconds: float = 2.0
+    # Official "Standard REST APIs" limit (covers historical candles, quotes)
+    # per https://upstox.com/developer/api-documentation/rate-limiting/.
+    upstox_rate_limit_per_sec: float = 50.0
+    upstox_daily_history_days: int = 400
+
+    # Which MarketDataProvider app.main constructs for the collector/pipeline.
+    # Upstox is primary per the Phase 2 architecture; FivePaisa stays fully
+    # supported as the legacy/secondary option (also always used for
+    # app.scheduler.universe_jobs's F&O-root derivation regardless of this
+    # setting — see app.main's wiring comment for why).
+    active_market_data_provider: Literal["upstox", "fivepaisa"] = "upstox"
 
     # --- Feature engine ---
     # rs_vs_nifty stays null until a symbol with this name exists in `symbols`
@@ -347,6 +378,11 @@ class Settings(BaseSettings):
             and self.fivepaisa_pin
             and self.fivepaisa_totp_secret
         )
+
+    @property
+    def upstox_configured(self) -> bool:
+        """Whether a (pre-obtained) Upstox access token is present."""
+        return bool(self.upstox_access_token)
 
     @property
     def telegram_configured(self) -> bool:
