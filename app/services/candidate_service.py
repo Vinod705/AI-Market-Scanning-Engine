@@ -10,7 +10,6 @@ decision engine already computed.
 """
 
 from datetime import date as date_
-from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +22,7 @@ from app.candidates.explainer import (
 from app.compounding.engine import evaluate_compounding
 from app.compounding.models import CompoundingResult
 from app.config.settings import Settings
+from app.core.time import utc_now
 from app.decision.evaluator import DecisionEvaluator
 from app.decision.models import DecisionCandidate, RuleResult, derive_signal_type
 from app.decision.validator import DecisionValidator
@@ -277,7 +277,7 @@ class CandidateService:
             ),
             compounding=_to_compounding_out(compounding),
             scan_date=result.date,
-            timestamp=datetime.now(),
+            timestamp=utc_now(),
         )
 
 

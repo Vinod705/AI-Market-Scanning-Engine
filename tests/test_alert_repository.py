@@ -1,10 +1,11 @@
 """Tests for app.repositories.alert_repository."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import utc_now
 from app.providers.base_provider import ProviderSymbol
 from app.repositories.alert_repository import (
     AlertDeliveryLogRepository,
@@ -88,11 +89,11 @@ async def test_get_most_recent_for_signal_respects_since(
         await _create_alert(repo, symbol_id, fingerprint="fp-a")
         await session.commit()
 
-        far_future = datetime.now() + timedelta(days=1)
+        far_future = utc_now() + timedelta(days=1)
         recent = await repo.get_most_recent_for_signal(symbol_id, "BREAKOUT", since=far_future)
         assert recent is None
 
-        far_past = datetime.now() - timedelta(days=1)
+        far_past = utc_now() - timedelta(days=1)
         recent = await repo.get_most_recent_for_signal(symbol_id, "BREAKOUT", since=far_past)
         assert recent is not None
 
@@ -121,16 +122,52 @@ async def test_expire_stale_marks_past_expiry_and_returns_them(
         symbol_id = await _seed_symbol(session)
         repo = AlertRepository(session)
         alert = await _create_alert(repo, symbol_id, fingerprint="fp-expiring")
-        alert.expires_at = datetime.now() - timedelta(minutes=1)
+        alert.expires_at = utc_now() - timedelta(minutes=1)
         await session.commit()
 
-        expired = await repo.expire_stale(now=datetime.now())
+        expired = await repo.expire_stale(now=utc_now())
         assert len(expired) == 1
         assert expired[0].id == alert.id
 
         refreshed = await repo.get_by_id(alert.id)
         assert refreshed is not None
         assert refreshed.status == "EXPIRED"
+
+
+async def test_list_created_since_excludes_older_alerts(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        symbol_id = await _seed_symbol(session)
+        repo = AlertRepository(session)
+        old = await _create_alert(repo, symbol_id, fingerprint="fp-old")
+        old.created_at = utc_now() - timedelta(days=1)
+        new = await _create_alert(repo, symbol_id, fingerprint="fp-new")
+        await session.commit()
+
+        since = utc_now() - timedelta(hours=1)
+        recent = await repo.list_created_since(since)
+        ids = {a.id for a in recent}
+        assert new.id in ids
+        assert old.id not in ids
+
+
+async def test_list_created_since_orders_oldest_first(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        symbol_id = await _seed_symbol(session)
+        repo = AlertRepository(session)
+        first = await _create_alert(repo, symbol_id, fingerprint="fp-first")
+        first.created_at = utc_now() - timedelta(minutes=10)
+        second = await _create_alert(repo, symbol_id, fingerprint="fp-second")
+        second.created_at = utc_now() - timedelta(minutes=5)
+        await session.commit()
+
+        since = utc_now() - timedelta(hours=1)
+        ordered = await repo.list_created_since(since)
+        ordered_ids = [a.id for a in ordered]
+        assert ordered_ids.index(first.id) < ordered_ids.index(second.id)
 
 
 async def test_get_status_summary(session_factory: async_sessionmaker[AsyncSession]) -> None:

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.alerts.formatter import AlertMessageContext, AlertMessageFormatter
 from app.alerts.queue import AlertQueue
 from app.config.settings import Settings
+from app.core.time import to_market_time
 from app.notifications.router import NotificationRouter
 from app.repositories.alert_repository import (
     AlertDeliveryLogRepository,
@@ -176,7 +177,11 @@ class NotificationManager:
                 ),
                 feature_snapshot=alert.feature_snapshot,
                 passed_rules=list(alert.passed_rules),
-                timestamp=alert.created_at,
+                # `created_at` is a UTC instant; the formatter renders it
+                # labeled "IST", so convert here at the presentation
+                # boundary rather than let the formatter assume the value
+                # is already local.
+                timestamp=to_market_time(alert.created_at, self._settings.market_timezone),
             )
 
         return AlertMessageFormatter.format_text(context, self._settings)

@@ -9,11 +9,11 @@ per-symbol failures so one bad symbol doesn't abort the whole run.
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import utc_now
 from app.data.market_updater import MarketStatusUpdater
 from app.data.validator import DataValidator, ValidationError
 from app.providers.base_provider import MarketDataProvider, ProviderError
@@ -72,7 +72,7 @@ class MarketDataCollector:
     async def _run(
         self, label: str, impl: Callable[[], Awaitable[CollectorRunResult]]
     ) -> CollectorRunResult:
-        start_time = datetime.now()
+        start_time = utc_now()
         logger.info("Starting {label}", label=label)
 
         async with self._session_factory() as session:
@@ -102,7 +102,7 @@ class MarketDataCollector:
                 provider_connected=self._provider.is_connected()
             )
 
-        finish_time = datetime.now()
+        finish_time = utc_now()
         async with self._session_factory() as session:
             log_repo = CollectorLogRepository(session)
             log = await session.merge(log)

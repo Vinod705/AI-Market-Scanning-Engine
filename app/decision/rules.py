@@ -13,6 +13,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from app.config.settings import Settings
+from app.core.time import to_market_time
 from app.data.market_updater import MarketStatusUpdater
 from app.decision.models import DecisionCandidate, RuleResult, RuleStatus
 from app.decision.validator import DecisionValidator
@@ -83,7 +84,11 @@ def check_required_features(
 def check_data_freshness(
     candidate: DecisionCandidate, settings: Settings, *, now: datetime | None = None
 ) -> RuleResult:
-    today = now.date() if now is not None else None
+    # `now` is a UTC instant; `scan_date` is an NSE trading-calendar date, so
+    # freshness must be judged against the market's own calendar day (IST),
+    # not UTC's — otherwise the boundary window (UTC evening = IST past
+    # midnight) would compare against the wrong day.
+    today = to_market_time(now, settings.market_timezone).date() if now is not None else None
     fresh = DecisionValidator.is_fresh(
         candidate.scan_date, max_age_days=settings.decision_max_data_age_days, today=today
     )

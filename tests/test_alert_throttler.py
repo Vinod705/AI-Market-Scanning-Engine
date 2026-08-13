@@ -1,12 +1,13 @@
 """Tests for app.alerts.throttler.AlertThrottler — configurable cooldown."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.alerts.throttler import AlertThrottler
 from app.config.settings import Settings
+from app.core.time import utc_now
 from app.providers.base_provider import ProviderSymbol
 from app.repositories.alert_repository import AlertRepository
 from app.repositories.market_repository import SymbolRepository
@@ -43,7 +44,7 @@ async def test_cooldown_suppresses_recent_alert_for_same_signal(
         await session.commit()
 
         throttler = AlertThrottler(alert_repo, Settings(alert_cooldown_minutes=30))
-        result = await throttler.check(symbol.id, "BREAKOUT", now=datetime.now())
+        result = await throttler.check(symbol.id, "BREAKOUT", now=utc_now())
         assert result.suppressed is True
         assert result.blocking_alert_id is not None
 
@@ -61,7 +62,7 @@ async def test_cooldown_allows_after_window_elapses(
         throttler = AlertThrottler(alert_repo, Settings(alert_cooldown_minutes=30))
 
         # No prior alert -> not suppressed.
-        result = await throttler.check(symbol.id, "BREAKOUT", now=datetime.now())
+        result = await throttler.check(symbol.id, "BREAKOUT", now=utc_now())
         assert result.suppressed is False
 
         # A prior alert far enough in the past (relative to `now`) doesn't
@@ -86,7 +87,7 @@ async def test_cooldown_allows_after_window_elapses(
         )
         await session.commit()
 
-        far_future = datetime.now() + timedelta(minutes=45)
+        far_future = utc_now() + timedelta(minutes=45)
         result = await throttler.check(symbol.id, "BREAKOUT", now=far_future)
         assert result.suppressed is False
 
@@ -122,5 +123,5 @@ async def test_cooldown_scoped_per_signal_type(
         await session.commit()
 
         throttler = AlertThrottler(alert_repo, Settings(alert_cooldown_minutes=30))
-        result = await throttler.check(symbol.id, "MOMENTUM", now=datetime.now())
+        result = await throttler.check(symbol.id, "MOMENTUM", now=utc_now())
         assert result.suppressed is False

@@ -7,11 +7,11 @@ or logs a plaintext password after the moment it's generated/submitted.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from app.auth.models import UserRole, UserStatus
 from app.auth.passwords import generate_temporary_password, hash_password, verify_password
 from app.auth.session_store import SessionStore
+from app.core.time import utc_now
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
 
@@ -37,7 +37,7 @@ class UserService:
             return None
         if not verify_password(password, user.password_hash):
             return None
-        await self._repo.record_login(user, when=datetime.now())
+        await self._repo.record_login(user, when=utc_now())
         return user
 
     async def change_password(

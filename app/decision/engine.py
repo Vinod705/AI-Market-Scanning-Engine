@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.alerts.manager import AlertManager
 from app.config.settings import Settings
+from app.core.time import utc_now
 from app.decision.evaluator import DecisionEvaluator
 from app.decision.models import Decision, DecisionCandidate, derive_signal_type
 from app.repositories.market_repository import SymbolRepository
@@ -43,7 +44,7 @@ class DecisionEngine:
 
     async def run_all(self, *, now: datetime | None = None) -> DecisionEngineResult:
         result = DecisionEngineResult()
-        moment = now or datetime.now()
+        moment = now or utc_now()
 
         async with self._session_factory() as session:
             qualified = await ScannerResultRepository(session).list_results(

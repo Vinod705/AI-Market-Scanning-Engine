@@ -17,7 +17,7 @@ invocation behind `getattr` so a genuinely missing method fails as a clear
 
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, cast
 
 import pandas as pd
@@ -26,6 +26,7 @@ from loguru import logger
 from py5paisa import FivePaisaClient
 
 from app.config.settings import Settings
+from app.core.time import to_market_time, utc_now
 from app.providers.base_provider import (
     Candle,
     MarketDataProvider,
@@ -188,7 +189,7 @@ class FivePaisaProvider(MarketDataProvider):
             low=row.get("Low", row["LastRate"]),
             close=row.get("PClose", row["LastRate"]),
             volume=int(row.get("TotalQty", 0)),
-            timestamp=datetime.now(),
+            timestamp=utc_now(),
         )
 
     async def get_intraday(self, symbol: str) -> list[Candle]:
@@ -215,7 +216,10 @@ class FivePaisaProvider(MarketDataProvider):
         self, symbol: str, *, timeframe: str, lookback: timedelta
     ) -> list[Candle]:
         provider_symbol = await self._resolve_symbol(symbol)
-        to_date = datetime.now()
+        # The 5paisa API expects dates in the exchange's own trading
+        # calendar (IST), not UTC — requesting in UTC would shift the date
+        # by a day near the UTC/IST midnight boundary.
+        to_date = to_market_time(utc_now(), self._settings.market_timezone)
         from_date = to_date - lookback
 
         df = await self._call_with_retry(

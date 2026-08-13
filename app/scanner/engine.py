@@ -8,11 +8,11 @@ constructs and the scheduler job calls — same role `FeatureEngine` and
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import utc_now
 from app.repositories.market_repository import SymbolRepository
 from app.repositories.scanner_repository import ScannerRunRepository
 from app.scanner.scanner_manager import ScannerManager
@@ -47,7 +47,7 @@ class ScannerEngine:
             async with self._session_factory() as session:
                 candidate_symbols = await scanner.get_candidate_symbols(session, symbols)
 
-            start_time = datetime.now()
+            start_time = utc_now()
             async with self._session_factory() as session:
                 run = await ScannerRunRepository(session).start(scanner.name, start_time)
                 run_id = run.id
@@ -55,14 +55,11 @@ class ScannerEngine:
 
             stats = await self._manager.run_scanner(scanner, candidate_symbols, run_id)
 
-            finish_time = datetime.now()
+            finish_time = utc_now()
             async with self._session_factory() as session:
                 run_repo = ScannerRunRepository(session)
                 # Merge the detached `run` object into this session rather than
-                # re-fetching by id: a re-fetch would pull `start_time` back as
-                # tz-aware (the column is TIMESTAMPTZ), which can't be subtracted
-                # from the naive `finish_time` above. `merge` keeps the original
-                # naive value, matching the pattern in `app.data.collector`.
+                # re-fetching by id — cheaper, and avoids an extra round-trip.
                 run_row = await session.merge(run)
                 await run_repo.finish(
                     run_row,

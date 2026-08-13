@@ -16,7 +16,6 @@ Never talks to a broker. Reads only validated OHLCV already in PostgreSQL
 import math
 from dataclasses import dataclass, field
 from datetime import date as date_
-from datetime import datetime
 from decimal import Decimal
 
 import numpy as np
@@ -25,6 +24,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import Settings
+from app.core.time import to_market_time, utc_now
 from app.features.calculator import DailyFeatureCalculator
 from app.features.session.calculator import SessionFeatureCalculator
 from app.models.daily_price import DailyPrice
@@ -110,6 +110,7 @@ class FeatureEngine:
         self._session_factory = session_factory
         self._benchmark_symbol = settings.feature_rs_benchmark_symbol
         self._lookback_bars = settings.feature_daily_lookback_bars
+        self._market_timezone = settings.market_timezone
 
     async def run_daily(self) -> FeatureRunResult:
         result = FeatureRunResult()
@@ -145,7 +146,9 @@ class FeatureEngine:
             symbols = await SymbolRepository(session).list_active()
         result.symbols_processed = len(symbols)
 
-        today = datetime.now().date()
+        # Session features are keyed by the NSE trading day (IST), not the
+        # UTC calendar day the underlying instant happens to fall on.
+        today = to_market_time(utc_now(), self._market_timezone).date()
 
         for symbol in symbols:
             try:

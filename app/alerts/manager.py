@@ -18,6 +18,7 @@ from app.alerts.deduplicator import AlertDeduplicator
 from app.alerts.queue import AlertQueue
 from app.alerts.throttler import AlertThrottler
 from app.config.settings import Settings
+from app.core.time import utc_now
 from app.decision.models import Decision, DecisionResult
 from app.decision.validator import DecisionValidator
 from app.repositories.alert_repository import AlertEventRepository, AlertRepository
@@ -43,7 +44,7 @@ class AlertManager:
             return None
         assert decision.quality is not None  # evaluator always sets quality for ALERT
 
-        moment = now or datetime.now()
+        moment = now or utc_now()
         fingerprint = AlertDeduplicator.build_fingerprint(decision)
 
         async with self._session_factory() as session:

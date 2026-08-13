@@ -10,11 +10,10 @@ Two jobs, both every minute like the Phase 3/4 jobs:
   fresh alert later (see `app.models.alert.Alert`'s docstring).
 """
 
-from datetime import datetime
-
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import utc_now
 from app.decision.engine import DecisionEngine
 from app.repositories.alert_repository import AlertEventRepository, AlertRepository
 from app.scheduler.service import SchedulerService
@@ -32,7 +31,7 @@ def register_alert_jobs(
         await decision_engine.run_all()
 
     async def _expiry_job() -> None:
-        now = datetime.now()
+        now = utc_now()
         async with session_factory() as session:
             alert_repo = AlertRepository(session)
             event_repo = AlertEventRepository(session)

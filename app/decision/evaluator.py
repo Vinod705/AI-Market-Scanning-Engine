@@ -19,6 +19,7 @@ Decision logic:
 from datetime import datetime
 
 from app.config.settings import Settings
+from app.core.time import utc_now
 from app.decision.models import (
     Decision,
     DecisionCandidate,
@@ -77,6 +78,6 @@ class DecisionEvaluator:
             failed_rules=failed,
             warnings=warnings,
             feature_snapshot=candidate.feature_snapshot,
-            timestamp=now or datetime.now(),
+            timestamp=now or utc_now(),
             rule_results=rule_results,
         )
