@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.time import utc_now
 from app.data.market_updater import MarketStatusUpdater
 from app.data.validator import DataValidator, ValidationError
+from app.models.symbol import Symbol
 from app.providers.base_provider import MarketDataProvider, ProviderError
 from app.repositories.market_repository import (
     CollectorLogRepository,
@@ -59,9 +60,16 @@ class MarketDataCollector:
         """Refresh the symbol master from the provider into the database."""
         return await self._run("symbol refresh", self._collect_symbols_impl)
 
-    async def collect_intraday(self) -> CollectorRunResult:
-        """Pull the latest intraday candles for every active symbol."""
-        return await self._run("intraday collection", self._collect_intraday_impl)
+    async def collect_intraday(self, symbols: list[Symbol] | None = None) -> CollectorRunResult:
+        """Pull the latest intraday candles for `symbols`, or every active
+        symbol when omitted (today's default REST-sweep behavior,
+        unchanged). Passing a subset is how
+        `app.providers.upstox_websocket.UpstoxMarketFeed` backfills exactly
+        the symbols it just (re)subscribed to on startup/reconnect, without
+        re-pulling the whole universe."""
+        return await self._run(
+            "intraday collection", lambda: self._collect_intraday_impl(symbols)
+        )
 
     async def collect_daily(self) -> CollectorRunResult:
         """Pull recent daily candles for every active symbol."""
@@ -144,17 +152,20 @@ class MarketDataCollector:
 
         return result
 
-    async def _collect_intraday_impl(self) -> CollectorRunResult:
-        return await self._collect_candles(intraday=True)
+    async def _collect_intraday_impl(self, symbols: list[Symbol] | None) -> CollectorRunResult:
+        return await self._collect_candles(intraday=True, symbols=symbols)
 
     async def _collect_daily_impl(self) -> CollectorRunResult:
-        return await self._collect_candles(intraday=False)
+        return await self._collect_candles(intraday=False, symbols=None)
 
-    async def _collect_candles(self, *, intraday: bool) -> CollectorRunResult:
+    async def _collect_candles(
+        self, *, intraday: bool, symbols: list[Symbol] | None
+    ) -> CollectorRunResult:
         result = CollectorRunResult()
 
-        async with self._session_factory() as session:
-            symbols = await SymbolRepository(session).list_active()
+        if symbols is None:
+            async with self._session_factory() as session:
+                symbols = await SymbolRepository(session).list_active()
         result.symbols_processed = len(symbols)
 
         for symbol in symbols:

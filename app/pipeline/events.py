@@ -9,6 +9,6 @@ from datetime import datetime
 
 @dataclass
 class PipelineEvent:
-    source: str  # "intraday" | "daily"
+    source: str  # "intraday" | "intraday_ws" | "daily"
     symbol_count: int
     as_of: datetime

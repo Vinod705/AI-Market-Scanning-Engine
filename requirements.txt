@@ -16,3 +16,5 @@ pyotp==2.9.0
 py5paisa==0.7.21.2
 httpx==0.28.1
 bcrypt==4.2.1
+websockets==17.0.1
+protobuf==7.35.1

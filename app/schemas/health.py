@@ -16,6 +16,7 @@ class HealthResponse(BaseModel):
     scanner: str = "unknown"
     decision_engine: str = "unknown"
     ingestion_worker: str = "unknown"
+    market_data_feed: str = "unknown"
     alert_queue: str = "unknown"
     telegram: str = "unknown"
     telegram_ipo: str = "unknown"

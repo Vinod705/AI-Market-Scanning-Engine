@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.collector_log import CollectorLog
 from app.models.daily_price import DailyPrice
 from app.models.intraday_price import IntradayPrice
+from app.models.market_data_feed_log import MarketDataFeedLog
 from app.models.market_status import SINGLETON_ID, MarketStatus
 from app.models.symbol import Symbol
 from app.providers.base_provider import Candle, ProviderSymbol
@@ -240,4 +241,37 @@ class CollectorLogRepository:
         log.success_count = success_count
         log.failed_count = failed_count
         log.error_message = error_message
+        await self._session.flush()
+
+
+class MarketDataFeedLogRepository:
+    """Persistence for `market_data_feed_logs` — one row per WebSocket
+    connect/reconnect cycle (see `app.providers.upstox_websocket`)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def open(self, connected_at: datetime) -> MarketDataFeedLog:
+        log = MarketDataFeedLog(connected_at=connected_at)
+        self._session.add(log)
+        await self._session.flush()
+        return log
+
+    async def close(
+        self,
+        log: MarketDataFeedLog,
+        *,
+        disconnected_at: datetime,
+        messages_received: int,
+        ticks_processed: int,
+        duplicates_dropped: int,
+        candles_flushed: int,
+        disconnect_reason: str | None,
+    ) -> None:
+        log.disconnected_at = disconnected_at
+        log.messages_received = messages_received
+        log.ticks_processed = ticks_processed
+        log.duplicates_dropped = duplicates_dropped
+        log.candles_flushed = candles_flushed
+        log.disconnect_reason = disconnect_reason
         await self._session.flush()

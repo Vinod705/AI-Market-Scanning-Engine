@@ -47,6 +47,7 @@ from app.pipeline.worker import PipelineWorker
 from app.providers.base_provider import MarketDataProvider, ProviderError
 from app.providers.fivepaisa_provider import FivePaisaProvider
 from app.providers.upstox_provider import UpstoxProvider
+from app.providers.upstox_websocket import UpstoxMarketFeed
 from app.scanner.breakout_scanner import BreakoutScanner
 from app.scanner.engine import ScannerEngine
 from app.scanner.scanner_registry import ScannerRegistry
@@ -242,10 +243,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         decision_engine,
         market_updater.is_market_open,
     )
+    # Phase 3: when Upstox is primary AND configured, its WebSocket feed
+    # becomes the continuous live-data path (see app.providers.upstox_websocket)
+    # — IntradayIngestionWorker's REST sweep only needs to run as an
+    # infrequent missing-data safety net at that point, not every ~60s for
+    # every symbol. A settings copy with the longer interval keeps this a
+    # call-site decision rather than new coupling inside ingestion_worker.py
+    # itself. When WS isn't active, IntradayIngestionWorker keeps its
+    # original short interval and role unchanged.
+    upstox_market_feed: UpstoxMarketFeed | None = None
+    ingestion_worker_settings = settings
+    if settings.active_market_data_provider == "upstox" and settings.upstox_configured:
+        upstox_market_feed = UpstoxMarketFeed(
+            settings, collector, AsyncSessionLocal, pipeline_queue
+        )
+        ingestion_worker_settings = settings.model_copy(
+            update={
+                "market_data_ingestion_min_interval_seconds": (
+                    settings.market_data_ingestion_ws_backup_interval_seconds
+                )
+            }
+        )
+
     # IntradayIngestionWorker: replaces the 4th (market_data_collect_intraday)
     # with a self-pacing continuous loop instead of a fixed interval trigger.
     ingestion_worker = IntradayIngestionWorker(
-        collector, market_updater.is_market_open, pipeline_queue, settings
+        collector, market_updater.is_market_open, pipeline_queue, ingestion_worker_settings
     )
 
     scheduler_service = get_scheduler_service(settings)
@@ -265,6 +288,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     notification_worker = asyncio.create_task(notification_manager.run_forever())
     pipeline_worker_task = asyncio.create_task(pipeline_worker.run_forever())
     ingestion_worker_task = asyncio.create_task(ingestion_worker.run_forever())
+    upstox_market_feed_task = (
+        asyncio.create_task(upstox_market_feed.run_forever())
+        if upstox_market_feed is not None
+        else None
+    )
 
     app.state.provider = provider
     app.state.scheduler_service = scheduler_service
@@ -277,6 +305,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.fundamental_provider = fundamental_provider
     app.state.pipeline_worker_task = pipeline_worker_task
     app.state.ingestion_worker_task = ingestion_worker_task
+    app.state.upstox_market_feed_task = upstox_market_feed_task
     app.state.trendlyne_provider = trendlyne_provider
     app.state.fundamental_queue = fundamental_queue
 
@@ -290,7 +319,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pipeline_worker_task.cancel()
     ingestion_worker.stop()
     ingestion_worker_task.cancel()
-    for task in (notification_worker, pipeline_worker_task, ingestion_worker_task):
+    background_tasks = [notification_worker, pipeline_worker_task, ingestion_worker_task]
+    if upstox_market_feed is not None and upstox_market_feed_task is not None:
+        upstox_market_feed.stop()
+        upstox_market_feed_task.cancel()
+        background_tasks.append(upstox_market_feed_task)
+    for task in background_tasks:
         with contextlib.suppress(asyncio.CancelledError):
             await task
     await provider.disconnect()

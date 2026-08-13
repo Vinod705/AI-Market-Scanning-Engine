@@ -9,6 +9,7 @@ from app.models.daily_price import DailyPrice
 from app.models.fno_universe import FnoUniverse
 from app.models.fundamental_fetch_log import FundamentalFetchLog
 from app.models.intraday_price import IntradayPrice
+from app.models.market_data_feed_log import MarketDataFeedLog
 from app.models.market_status import MarketStatus
 from app.models.scanner_log import ScannerLog
 from app.models.scanner_result import ScannerResult
@@ -27,6 +28,7 @@ __all__ = [
     "FnoUniverse",
     "FundamentalFetchLog",
     "IntradayPrice",
+    "MarketDataFeedLog",
     "MarketStatus",
     "ScannerLog",
     "ScannerResult",

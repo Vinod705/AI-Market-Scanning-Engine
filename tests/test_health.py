@@ -19,6 +19,7 @@ async def test_health_returns_200_with_subsystem_statuses(client: AsyncClient) -
         "scanner",
         "decision_engine",
         "ingestion_worker",
+        "market_data_feed",
         "alert_queue",
         "telegram",
         "telegram_ipo",

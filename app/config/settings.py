@@ -134,6 +134,31 @@ class Settings(BaseSettings):
     upstox_rate_limit_per_sec: float = 50.0
     upstox_daily_history_days: int = 400
 
+    # --- Upstox WebSocket market feed (Phase 3) ---
+    # ltpc-only by design: the LTPC protobuf message has no OI/greeks/depth
+    # field at all, which structurally satisfies "no OI yet" — nothing to
+    # filter out of a richer payload, nothing to accidentally leak.
+    upstox_ws_mode: str = "ltpc"
+    upstox_ws_authorize_url: str = "https://api.upstox.com/v3/feed/market-data-feed/authorize"
+    upstox_ws_ping_interval_seconds: float = 20.0
+    upstox_ws_ping_timeout_seconds: float = 20.0
+    # No message at all (not just no ticks for one symbol) within this
+    # window is treated as a stale connection and forces a reconnect.
+    upstox_ws_stale_threshold_seconds: float = 30.0
+    upstox_ws_reconnect_backoff_seconds: float = 2.0
+    upstox_ws_reconnect_max_backoff_seconds: float = 60.0
+    # How often completed 1-minute candles are batch-written to Postgres and
+    # a PipelineEvent published — not per-tick, see app.providers.upstox_websocket.
+    upstox_ws_flush_interval_seconds: float = 15.0
+
+    # Once the WS feed is live and covering the continuous case,
+    # IntradayIngestionWorker's REST sweep only needs to run as an
+    # infrequent safety net (missing-data catch-all) rather than every
+    # ~60s for every symbol — see app.main's wiring. Used only when Upstox
+    # WS is active; IntradayIngestionWorker keeps its original short
+    # interval (market_data_ingestion_min_interval_seconds) otherwise.
+    market_data_ingestion_ws_backup_interval_seconds: float = 600.0
+
     # Which MarketDataProvider app.main constructs for the collector/pipeline.
     # Upstox is primary per the Phase 2 architecture; FivePaisa stays fully
     # supported as the legacy/secondary option (also always used for

@@ -56,6 +56,16 @@ async def health_check(request: Request) -> HealthResponse:
         else "unavailable"
     )
 
+    # Only constructed at all when Upstox is primary and configured (see
+    # app.main) — a None task honestly means "not applicable here", not a
+    # failure, so it's reported the same way TradingView/Trendlyne report
+    # "not_configured" rather than "unavailable".
+    upstox_market_feed_task = getattr(state, "upstox_market_feed_task", None)
+    if upstox_market_feed_task is None:
+        market_data_feed = "not_configured"
+    else:
+        market_data_feed = "healthy" if not upstox_market_feed_task.done() else "unavailable"
+
     alert_queue = getattr(state, "alert_queue", None)
     alert_queue_status = "healthy" if alert_queue is not None else "unavailable"
 
@@ -103,6 +113,7 @@ async def health_check(request: Request) -> HealthResponse:
         scanner=pipeline_worker_status,
         decision_engine=pipeline_worker_status,
         ingestion_worker=ingestion_worker_status,
+        market_data_feed=market_data_feed,
         alert_queue=alert_queue_status,
         telegram=telegram,
         telegram_ipo=telegram_ipo,

@@ -12,6 +12,8 @@ target-version = ["py312"]
 line-length = 100
 target-version = "py312"
 src = ["app", "tests"]
+# Generated Protobuf bindings — never hand-edited, not ours to lint/format.
+extend-exclude = ["app/providers/upstox_proto/*_pb2.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -26,6 +28,16 @@ files = ["app"]
 strict = true
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
+# Generated Protobuf bindings — untyped/dynamic by nature, never hand-edited.
+# `exclude` alone only stops direct discovery; modules that import it (e.g.
+# upstox_websocket.py) would still pull it in via follow_imports, so also
+# skip following into it from there.
+exclude = ["app/providers/upstox_proto/.*_pb2\\.py$"]
+
+[[tool.mypy.overrides]]
+module = "app.providers.upstox_proto.*"
+ignore_errors = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
