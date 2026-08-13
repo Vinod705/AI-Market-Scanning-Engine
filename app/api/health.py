@@ -38,6 +38,24 @@ async def health_check(request: Request) -> HealthResponse:
     scheduler_running = scheduler_service is not None and scheduler_service.running
     scheduler_status = "healthy" if scheduler_running else "unavailable"
 
+    # feature/scanner/decision all run inside the same PipelineWorker task
+    # now (see app.pipeline.worker) rather than as independent scheduler
+    # jobs, so they share one real liveness signal instead of each blindly
+    # proxying "is APScheduler running at all".
+    pipeline_worker_task = getattr(state, "pipeline_worker_task", None)
+    pipeline_worker_status = (
+        "healthy"
+        if pipeline_worker_task is not None and not pipeline_worker_task.done()
+        else "unavailable"
+    )
+
+    ingestion_worker_task = getattr(state, "ingestion_worker_task", None)
+    ingestion_worker_status = (
+        "healthy"
+        if ingestion_worker_task is not None and not ingestion_worker_task.done()
+        else "unavailable"
+    )
+
     alert_queue = getattr(state, "alert_queue", None)
     alert_queue_status = "healthy" if alert_queue is not None else "unavailable"
 
@@ -80,9 +98,11 @@ async def health_check(request: Request) -> HealthResponse:
         status="healthy" if database == "healthy" else "degraded",
         database=database,
         market_data=market_data,
-        feature_engine=scheduler_status,
-        scanner=scheduler_status,
-        decision_engine=scheduler_status,
+        scheduler=scheduler_status,
+        feature_engine=pipeline_worker_status,
+        scanner=pipeline_worker_status,
+        decision_engine=pipeline_worker_status,
+        ingestion_worker=ingestion_worker_status,
         alert_queue=alert_queue_status,
         telegram=telegram,
         telegram_ipo=telegram_ipo,

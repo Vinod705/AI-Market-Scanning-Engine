@@ -65,6 +65,29 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_timezone: str = "Asia/Kolkata"
 
+    # --- Market data ingestion / pipeline (Phase 1) ---
+    # Intraday collection is a self-pacing continuous loop, not a fixed
+    # APScheduler interval (see app.data.ingestion_worker) — this is its
+    # *target* cadence when a pass finishes early, not a hard deadline it
+    # can miss. When a pass takes longer (rate-limit bound), the loop just
+    # runs the next pass immediately rather than skipping a trigger.
+    market_data_ingestion_min_interval_seconds: float = 60.0
+    # How often the ingestion loop re-checks "is the market open yet"
+    # while it's closed, instead of busy-looping.
+    market_closed_poll_interval_seconds: float = 30.0
+    # Redis Stream connecting ingestion to the downstream feature/scanner/
+    # decision worker (see app.pipeline) — reuses the same Redis instance
+    # app.auth.redis_client already requires for dashboard sessions.
+    pipeline_stream_key: str = "pipeline:ingestion_events"
+    pipeline_consumer_group: str = "pipeline_workers"
+    pipeline_consumer_name: str = "pipeline_worker_1"
+    # Approximate trim cap (Redis XADD MAXLEN ~) so the stream can't grow
+    # unbounded if the worker is ever down for an extended period.
+    pipeline_stream_maxlen: int = 500
+    # XREADGROUP BLOCK timeout in ms — bounds how long the worker blocks
+    # per read so its stop() flag gets checked periodically.
+    pipeline_stream_block_ms: int = 5000
+
     # --- 5paisa provider ---
     fivepaisa_app_name: str = ""
     fivepaisa_app_source: str = ""

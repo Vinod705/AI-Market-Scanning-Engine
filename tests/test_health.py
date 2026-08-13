@@ -14,9 +14,11 @@ async def test_health_returns_200_with_subsystem_statuses(client: AsyncClient) -
     for key in (
         "database",
         "market_data",
+        "scheduler",
         "feature_engine",
         "scanner",
         "decision_engine",
+        "ingestion_worker",
         "alert_queue",
         "telegram",
         "telegram_ipo",
@@ -59,6 +61,7 @@ async def test_health_reports_unavailable_components_without_lifespan(client: As
     response = await client.get("/health")
     body = response.json()
     assert body["scanner"] == "unavailable"
+    assert body["ingestion_worker"] == "unavailable"
     assert body["alert_queue"] == "unavailable"
     assert body["telegram"] == "unavailable"
     assert body["telegram_ipo"] == "unavailable"

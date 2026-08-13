@@ -1,13 +1,14 @@
-"""Tests for app.scheduler.alert_jobs and app.scheduler.digest_jobs job registration."""
+"""Tests for app.scheduler.alert_jobs and app.scheduler.digest_jobs job registration.
+
+The decision-engine run is no longer registered here — it moved into
+app.pipeline.worker.PipelineWorker, see tests/test_pipeline_worker.py.
+"""
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.alerts.manager import AlertManager
-from app.alerts.queue import AlertQueue
 from app.config.settings import Settings
-from app.decision.engine import DecisionEngine
 from app.notifications.telegram import TelegramProvider
-from app.scheduler.alert_jobs import JOB_ID_ALERT_EXPIRY, JOB_ID_DECISION, register_alert_jobs
+from app.scheduler.alert_jobs import JOB_ID_ALERT_EXPIRY, register_alert_jobs
 from app.scheduler.digest_jobs import (
     JOB_ID_DIGEST_EVENING,
     JOB_ID_DIGEST_MORNING,
@@ -22,13 +23,9 @@ async def test_register_alert_jobs_adds_expected_jobs(
     settings = Settings(scheduler_enabled=True, scheduler_timezone="Asia/Kolkata")
     scheduler_service = SchedulerService(settings)
 
-    alert_manager = AlertManager(session_factory, settings, AlertQueue())
-    decision_engine = DecisionEngine(session_factory, settings, alert_manager)
-
-    register_alert_jobs(scheduler_service, decision_engine, session_factory)
+    register_alert_jobs(scheduler_service, session_factory)
 
     job_ids = {job.id for job in scheduler_service.jobs}
-    assert JOB_ID_DECISION in job_ids
     assert JOB_ID_ALERT_EXPIRY in job_ids
 
 

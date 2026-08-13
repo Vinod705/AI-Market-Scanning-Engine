@@ -20,7 +20,7 @@ from app.api.fundamental_queue import router as fundamental_queue_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
 from app.api.scanner import router as scanner_router
-from app.auth.redis_client import check_redis_connection, dispose_redis
+from app.auth.redis_client import check_redis_connection, dispose_redis, redis_client
 from app.candidates.fno_momentum_scanner import FnoMomentumScanner
 from app.candidates.ipo_intraday_scanner import IpoIntradayScanner
 from app.candidates.pre_breakout_scanner import PreBreakoutScanner
@@ -29,6 +29,7 @@ from app.config.settings import get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import register_exception_handlers, request_context_middleware
 from app.data.collector import MarketDataCollector
+from app.data.ingestion_worker import IntradayIngestionWorker
 from app.data.market_updater import MarketStatusUpdater
 from app.database.session import AsyncSessionLocal, check_database_connection, dispose_engine
 from app.decision.engine import DecisionEngine
@@ -41,6 +42,8 @@ from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProv
 from app.notifications.manager import NotificationManager
 from app.notifications.router import NotificationRouter
 from app.notifications.telegram import TelegramProvider
+from app.pipeline.queue import RedisPipelineEventQueue
+from app.pipeline.worker import PipelineWorker
 from app.providers.base_provider import ProviderError
 from app.providers.fivepaisa_provider import FivePaisaProvider
 from app.scanner.breakout_scanner import BreakoutScanner
@@ -48,10 +51,8 @@ from app.scanner.engine import ScannerEngine
 from app.scanner.scanner_registry import ScannerRegistry
 from app.scheduler.alert_jobs import register_alert_jobs
 from app.scheduler.digest_jobs import register_digest_jobs
-from app.scheduler.feature_jobs import register_feature_jobs
 from app.scheduler.fundamental_queue_jobs import register_fundamental_queue_jobs
 from app.scheduler.jobs import register_market_data_jobs
-from app.scheduler.scanner_jobs import register_scanner_jobs
 from app.scheduler.service import get_scheduler_service
 from app.scheduler.universe_jobs import register_universe_jobs
 
@@ -89,6 +90,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     market_updater = MarketStatusUpdater(AsyncSessionLocal)
     collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater)
     feature_engine = FeatureEngine(AsyncSessionLocal, settings)
+
+    # Pipeline: ingestion -> Redis Stream -> PipelineWorker (feature ->
+    # scanner -> decision), replacing 4 independent 1-minute APScheduler
+    # jobs that raced on each other's DB state — see app.data.ingestion_worker
+    # and app.pipeline.worker for why. ensure_group() runs before either
+    # worker task starts so there's no bootstrap race between the ingestion
+    # loop publishing and the worker's consumer group existing.
+    pipeline_queue = RedisPipelineEventQueue(redis_client, settings)
+    try:
+        await pipeline_queue.ensure_group()
+    except Exception:
+        logger.warning(
+            "Pipeline queue group not created at startup — Redis not reachable? "
+            "Ingestion/pipeline workers will keep retrying once started."
+        )
 
     # Multi-source fundamental intelligence (Phase 7 + follow-up). Trendlyne
     # MCP is the only source with an authorized, server-callable interface
@@ -174,13 +190,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         AsyncSessionLocal, settings, alert_queue, notification_router
     )
 
+    # PipelineWorker: event-driven feature -> scanner -> decision, replacing
+    # 3 of the 4 old independent 1-minute jobs (see module docstring).
+    pipeline_worker = PipelineWorker(
+        pipeline_queue,
+        feature_engine,
+        scanner_engine,
+        decision_engine,
+        market_updater.is_market_open,
+    )
+    # IntradayIngestionWorker: replaces the 4th (market_data_collect_intraday)
+    # with a self-pacing continuous loop instead of a fixed interval trigger.
+    ingestion_worker = IntradayIngestionWorker(
+        collector, market_updater.is_market_open, pipeline_queue, settings
+    )
+
     scheduler_service = get_scheduler_service(settings)
-    register_market_data_jobs(scheduler_service, collector, market_updater)
-    register_feature_jobs(scheduler_service, feature_engine, market_updater)
+    register_market_data_jobs(scheduler_service, collector, pipeline_queue)
     register_universe_jobs(scheduler_service, provider, AsyncSessionLocal)
-    register_scanner_jobs(scheduler_service, scanner_engine)
     register_fundamental_queue_jobs(scheduler_service, fundamental_queue)
-    register_alert_jobs(scheduler_service, decision_engine, AsyncSessionLocal)
+    register_alert_jobs(scheduler_service, AsyncSessionLocal)
     register_digest_jobs(
         scheduler_service, AsyncSessionLocal, ipo_telegram_provider, fno_telegram_provider
     )
@@ -191,6 +220,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # in-memory queue — see NotificationManager.recover_pending.
     await notification_manager.recover_pending()
     notification_worker = asyncio.create_task(notification_manager.run_forever())
+    pipeline_worker_task = asyncio.create_task(pipeline_worker.run_forever())
+    ingestion_worker_task = asyncio.create_task(ingestion_worker.run_forever())
 
     app.state.provider = provider
     app.state.scheduler_service = scheduler_service
@@ -201,6 +232,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.tradingview_source = tradingview_source
     app.state.fundamental_provider = fundamental_provider
+    app.state.pipeline_worker_task = pipeline_worker_task
+    app.state.ingestion_worker_task = ingestion_worker_task
     app.state.trendlyne_provider = trendlyne_provider
     app.state.fundamental_queue = fundamental_queue
 
@@ -210,8 +243,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler_service.shutdown(wait=True)
     notification_manager.stop()
     notification_worker.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await notification_worker
+    pipeline_worker.stop()
+    pipeline_worker_task.cancel()
+    ingestion_worker.stop()
+    ingestion_worker_task.cancel()
+    for task in (notification_worker, pipeline_worker_task, ingestion_worker_task):
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     await provider.disconnect()
     await dispose_engine()
     await dispose_redis()

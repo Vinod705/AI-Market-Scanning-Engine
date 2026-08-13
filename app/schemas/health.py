@@ -7,9 +7,15 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     database: str = "unknown"
     market_data: str = "unknown"
+    # APScheduler itself — daily/symbol-refresh collection, universe
+    # refresh, fundamental queue, alert expiry, digest. Not the hot
+    # feature/scanner/decision path anymore — see pipeline_worker-backed
+    # fields below.
+    scheduler: str = "unknown"
     feature_engine: str = "unknown"
     scanner: str = "unknown"
     decision_engine: str = "unknown"
+    ingestion_worker: str = "unknown"
     alert_queue: str = "unknown"
     telegram: str = "unknown"
     telegram_ipo: str = "unknown"

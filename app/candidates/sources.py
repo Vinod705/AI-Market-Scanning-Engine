@@ -43,6 +43,13 @@ class CandidateSourceProvider(ABC):
     It must never raise for "no data available" — return an empty set
     instead, exactly like `FundamentalDataProvider` returns `None` rather
     than fabricating zeros (see `app.fundamentals.provider`).
+
+    Since Phase 1, `ScannerEngine.run_all()` (which calls this) runs inside
+    `app.pipeline.worker.PipelineWorker`'s hot loop — a real implementation
+    here must stay non-blocking/local (cached/pre-fetched data, no
+    synchronous external HTTP call made from inside `discover()` itself),
+    the same "no slow external API calls in the hot path" constraint the
+    rest of that pipeline already holds to.
     """
 
     name: ScannerSource
