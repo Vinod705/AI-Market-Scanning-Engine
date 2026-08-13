@@ -1,7 +1,7 @@
 """F&O universe membership — which symbols currently have NSE derivative
-(futures/options) contracts, refreshed daily from the same scrip-master
-call the equity symbol list already uses (see
-`FivePaisaProvider.get_fno_symbol_roots`)."""
+(futures/options) contracts, refreshed daily from whichever active
+market-data provider implements the F&O-roots provider contract (see
+`app.scheduler.universe_jobs.FnoRootsProvider`)."""
 
 from datetime import datetime as datetime_
 

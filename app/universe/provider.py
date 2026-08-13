@@ -1,9 +1,19 @@
 """UniverseProvider: which symbols belong to which analysis universe.
 
-Reuses existing data for IPO/LISTED — no new source. F&O is the one
-genuinely new persistent classification (see `app.models.fno_universe`),
-refreshed daily from `FivePaisaProvider.get_fno_symbol_roots()` — see
-`app.scheduler.universe_jobs`.
+Reuses existing data for IPO — no new source. F&O is the one genuinely
+new persistent classification (see `app.models.fno_universe`), refreshed
+daily from whichever active market-data provider implements the
+F&O-roots provider contract — see
+`app.scheduler.universe_jobs.FnoRootsProvider`.
+
+LISTED has no method here: it's just every active symbol, which is
+`BaseScanner.get_candidate_symbols()`'s own default
+(`app/scanner/base_scanner.py`) — `BreakoutScanner` (`breakout_v1`) never
+overrides it, so it evaluates the full active-symbol set unfiltered. A
+`get_listed_universe()` wrapper around `SymbolRepository.list_active()`
+used to exist here too, purely duplicating that default with an extra,
+redundant DB query — removed as dead code (Phase 4C code-level audit
+found it had zero real callers).
 """
 
 from datetime import date, timedelta
