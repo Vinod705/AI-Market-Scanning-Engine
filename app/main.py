@@ -47,6 +47,7 @@ from app.scanner.breakout_scanner import BreakoutScanner
 from app.scanner.engine import ScannerEngine
 from app.scanner.scanner_registry import ScannerRegistry
 from app.scheduler.alert_jobs import register_alert_jobs
+from app.scheduler.digest_jobs import register_digest_jobs
 from app.scheduler.feature_jobs import register_feature_jobs
 from app.scheduler.fundamental_queue_jobs import register_fundamental_queue_jobs
 from app.scheduler.jobs import register_market_data_jobs
@@ -180,6 +181,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_scanner_jobs(scheduler_service, scanner_engine)
     register_fundamental_queue_jobs(scheduler_service, fundamental_queue)
     register_alert_jobs(scheduler_service, decision_engine, AsyncSessionLocal)
+    register_digest_jobs(
+        scheduler_service, AsyncSessionLocal, ipo_telegram_provider, fno_telegram_provider
+    )
     scheduler_service.start()
 
     # Restart recovery: reload PENDING/RETRYING alerts from PostgreSQL and

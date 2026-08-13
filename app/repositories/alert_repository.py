@@ -110,6 +110,15 @@ class AlertRepository:
         stmt = stmt.order_by(Alert.created_at.desc()).limit(limit)
         return list((await self._session.execute(stmt)).scalars().all())
 
+    async def list_created_since(self, since: datetime_) -> list[Alert]:
+        """All alerts created at or after `since`, oldest first -- used by
+        the twice-daily digest job (see app.scheduler.digest_jobs) to
+        summarize genuinely new qualifying signals since the last digest.
+        Regardless of delivery status: a digest is about what qualified,
+        not what the real-time channel already delivered."""
+        stmt = select(Alert).where(Alert.created_at >= since).order_by(Alert.created_at.asc())
+        return list((await self._session.execute(stmt)).scalars().all())
+
     async def list_by_status(self, statuses: list[str], *, limit: int = 200) -> list[Alert]:
         """Used for restart recovery: reload alerts still PENDING/RETRYING
         so they can be requeued instead of resending already-delivered ones."""
