@@ -64,6 +64,3 @@ class UniverseProvider:
     async def get_fno_universe(self) -> list[Symbol]:
         symbol_ids = await self._fno_repo.list_symbol_ids()
         return await self._symbol_repo.list_by_ids(symbol_ids)
-
-    async def get_listed_universe(self) -> list[Symbol]:
-        return await self._symbol_repo.list_active()

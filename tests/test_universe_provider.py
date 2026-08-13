@@ -217,19 +217,3 @@ async def test_fno_universe_replace_all_clears_stale_membership(
         await session.commit()
         assert await repo.count() == 1
         assert await repo.list_symbol_ids() == [symbol_a.id]
-
-
-async def test_get_listed_universe_matches_active_symbols(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with session_factory() as session:
-        await SymbolRepository(session).upsert(
-            ProviderSymbol(symbol="LISTEDCO", exchange="N", instrument_token="1")
-        )
-        await session.commit()
-
-    async with session_factory() as session:
-        universe = await UniverseProvider(session, Settings()).get_listed_universe()
-        active = await SymbolRepository(session).list_active()
-
-    assert {s.symbol for s in universe} == {s.symbol for s in active}

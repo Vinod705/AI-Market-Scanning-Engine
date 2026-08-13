@@ -44,7 +44,7 @@ from app.notifications.router import NotificationRouter
 from app.notifications.telegram import TelegramProvider
 from app.pipeline.queue import RedisPipelineEventQueue
 from app.pipeline.worker import PipelineWorker
-from app.providers.base_provider import MarketDataProvider, ProviderError
+from app.providers.base_provider import ProviderError
 from app.providers.fivepaisa_provider import FivePaisaProvider
 from app.providers.upstox_provider import UpstoxProvider
 from app.providers.upstox_websocket import UpstoxMarketFeed
@@ -84,7 +84,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # primary is the only one passed to MarketDataCollector — collector.py
     # depends only on the MarketDataProvider ABC, so this swap needs no
     # changes there.
-    provider: MarketDataProvider
+    # Always exactly one of these two concrete classes (no third provider
+    # exists) — a union, not the bare MarketDataProvider ABC, so this one
+    # variable satisfies both MarketDataCollector's ABC-only needs and
+    # register_universe_jobs's extra get_fno_symbol_roots() requirement
+    # below without a cast.
+    provider: UpstoxProvider | FivePaisaProvider
     if settings.active_market_data_provider == "upstox":
         provider = UpstoxProvider(settings)
         if settings.upstox_configured:
@@ -108,29 +113,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "5paisa credentials not configured — market data jobs will fail until they are"
             )
 
-    # app.scheduler.universe_jobs derives F&O underlying roots from 5paisa's
-    # scrip master specifically (FivePaisaProvider.get_fno_symbol_roots — not
-    # part of the MarketDataProvider ABC, and Upstox's equivalent field
-    # hasn't been verified, so it isn't guessed at here). This stays
-    # 5paisa-backed regardless of which provider is primary above; when
-    # 5paisa *is* primary this constructs a second instance, which is a
-    # deliberate, low-cost tradeoff to avoid a riskier interface change.
-    fivepaisa_provider_for_universe = (
-        provider if isinstance(provider, FivePaisaProvider) else FivePaisaProvider(settings)
-    )
-    if fivepaisa_provider_for_universe is not provider:
-        if settings.fivepaisa_configured:
-            try:
-                await fivepaisa_provider_for_universe.connect()
-            except ProviderError as exc:
-                logger.warning(
-                    "5paisa provider (F&O universe) not connected at startup: {error}", error=exc
-                )
-        else:
-            logger.warning(
-                "5paisa credentials not configured — F&O universe refresh will fail until they are"
-            )
-
+    # app.scheduler.universe_jobs derives F&O underlying roots from
+    # provider.get_fno_symbol_roots() (not part of the MarketDataProvider
+    # ABC — see universe_jobs.py's FnoRootsProvider). Both FivePaisaProvider
+    # and UpstoxProvider implement it, so whichever provider is primary
+    # above is reused directly here — no second connection/instance needed.
     market_updater = MarketStatusUpdater(AsyncSessionLocal)
     collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater)
     feature_engine = FeatureEngine(AsyncSessionLocal, settings)
@@ -273,7 +260,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     scheduler_service = get_scheduler_service(settings)
     register_market_data_jobs(scheduler_service, collector, pipeline_queue)
-    register_universe_jobs(scheduler_service, fivepaisa_provider_for_universe, AsyncSessionLocal)
+    register_universe_jobs(scheduler_service, provider, AsyncSessionLocal)
     register_fundamental_queue_jobs(scheduler_service, fundamental_queue)
     register_alert_jobs(scheduler_service, AsyncSessionLocal)
     register_digest_jobs(
@@ -328,8 +315,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         with contextlib.suppress(asyncio.CancelledError):
             await task
     await provider.disconnect()
-    if fivepaisa_provider_for_universe is not provider:
-        await fivepaisa_provider_for_universe.disconnect()
     await dispose_engine()
     await dispose_redis()
     logger.info("Shutdown complete")

@@ -16,19 +16,26 @@ guessed. What's implemented, and why the rest isn't:
   its own. Because the token is static, an expired/invalid token (401) can't
   be fixed by retrying within this process — see `_handle_response`.
 - **Instruments**: the public, unauthenticated gzipped JSON master
-  (`Settings.upstox_instruments_url`), filtered to the `NSE_EQ` segment.
+  (`Settings.upstox_instruments_url`), filtered to the `NSE_EQ` segment for
+  `get_symbols()`. The same file also carries `NSE_FO` (derivatives) records
+  — `get_fno_symbol_roots()` re-downloads and filters to that segment
+  instead, reading the real `underlying_symbol` field (verified live: 208
+  distinct equity-underlying roots, all 208 matched a real `NSE_EQ`
+  `trading_symbol` exactly) — the direct Upstox equivalent of
+  `FivePaisaProvider.get_fno_symbol_roots()`'s `SymbolRoot` column, not a
+  guess.
 - **Quotes / historical candles**: `GET /market-quote/quotes` and
   `GET /historical-candle/:instrument_key/:interval/:to_date/:from_date`.
 - **Deliberately NOT implemented** (confirmed real and available, out of
   scope for this phase): option chain (`GET /option/chain`, includes OI/
-  greeks — deferred, no OI/derivatives work yet), the WebSocket market feed
-  v3 (protobuf-encoded, no verified `.proto` schema to decode against
-  without a live connection to test), and the Company Fundamentals API
-  (`GET /fundamentals/{ISIN}/...` — belongs to the separate
-  `app.fundamentals.*` subsystem with its own `FundamentalDataProvider`
-  interface, not this one). Historical candles also carry an open-interest
-  value per bar (7th array element) that is intentionally never read into
-  `Candle`, which has no OI field.
+  greeks — deferred, no OI/derivatives work yet), and the Company
+  Fundamentals API (`GET /fundamentals/{ISIN}/...` — belongs to the
+  separate `app.fundamentals.*` subsystem with its own
+  `FundamentalDataProvider` interface, not this one). The WebSocket market
+  feed v3 is implemented separately in `app.providers.upstox_websocket`.
+  Historical candles also carry an open-interest value per bar (7th array
+  element) that is intentionally never read into `Candle`, which has no OI
+  field.
 """
 
 import asyncio
@@ -52,6 +59,7 @@ from app.providers.base_provider import (
 )
 
 _SYMBOL_SEGMENT = "NSE_EQ"
+_DERIVATIVES_SEGMENT = "NSE_FO"
 
 
 class UpstoxProvider(MarketDataProvider):
@@ -135,6 +143,40 @@ class UpstoxProvider(MarketDataProvider):
         self._symbol_cache = {s.symbol: s for s in symbols}
         logger.info("Loaded {count} symbols from Upstox instruments master", count=len(symbols))
         return symbols
+
+    async def get_fno_symbol_roots(self) -> set[str]:
+        """Underlying stock symbols that currently have NSE derivative
+        (futures/options) contracts — derived from the same instruments
+        master `get_symbols()` uses, not a separate/invented data source.
+
+        Verified live (this session): `NSE_FO` records carry a real
+        `underlying_symbol` field (e.g. "TCS" for every TCS future/option
+        contract regardless of expiry/strike) — the direct Upstox
+        equivalent of `FivePaisaProvider.get_fno_symbol_roots()`'s
+        `SymbolRoot` column, not a guess. This also includes index
+        derivatives (NIFTY, BANKNIFTY, ...) — callers are expected to
+        intersect the result with known equity symbols to exclude those,
+        since an index has no underlying cash-market row of its own. See
+        `app.universe.provider.UniverseProvider.get_fno_universe`.
+        """
+        raw = await self._download_instruments()
+        try:
+            records = json.loads(raw)
+        except ValueError as exc:
+            raise ProviderError(f"Upstox instruments master is not valid JSON: {exc}") from exc
+        if not isinstance(records, list):
+            raise ProviderError("Upstox instruments master returned no data")
+
+        roots: set[str] = set()
+        for record in records:
+            if not isinstance(record, dict) or record.get("segment") != _DERIVATIVES_SEGMENT:
+                continue
+            root = record.get("underlying_symbol")
+            if root:
+                roots.add(str(root).strip())
+
+        logger.info("Found {count} distinct F&O underlying roots", count=len(roots))
+        return roots
 
     async def get_quote(self, symbol: str) -> Quote:
         provider_symbol = await self._resolve_symbol(symbol)

@@ -419,7 +419,11 @@ async def test_missing_ipo_credentials_fails_without_affecting_fno_bot() -> None
         telegram_chat_id="default-chat",
         fno_telegram_bot_token="fno-token",
         fno_telegram_chat_id="fno-chat",
-        # ipo_telegram_bot_token/chat_id left unset — missing credentials
+        # Explicitly blank, not just omitted — Settings() auto-loads .env
+        # (model_config's env_file), so a real local .env with these set
+        # would otherwise leak in and silently defeat this test's premise.
+        ipo_telegram_bot_token="",
+        ipo_telegram_chat_id="",
     )
     default_bot = TelegramProvider(settings, channel_name="telegram")
     ipo_bot = TelegramProvider(
@@ -452,7 +456,10 @@ async def test_missing_fno_credentials_fails_without_affecting_ipo_bot() -> None
         telegram_chat_id="default-chat",
         ipo_telegram_bot_token="ipo-token",
         ipo_telegram_chat_id="ipo-chat",
-        # fno_telegram_bot_token/chat_id left unset — missing credentials
+        # Explicitly blank, not just omitted — see the mirror-image test
+        # above for why (a real local .env can otherwise leak in).
+        fno_telegram_bot_token="",
+        fno_telegram_chat_id="",
     )
     ipo_bot = TelegramProvider(
         settings,

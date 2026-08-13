@@ -1,16 +1,24 @@
 """F&O universe refresh job.
 
-Reuses the same 5paisa scrip-master call `register_market_data_jobs`
-already exercises daily — refreshes `fno_universe` once a day, shortly
-after the symbol master refresh (07:00 IST) so newly-listed symbols and
-newly-added/expired F&O contracts are reconciled together.
+Reuses the same provider scrip/instruments-master call
+`register_market_data_jobs` already exercises daily — refreshes
+`fno_universe` once a day, shortly after the symbol master refresh
+(07:00 IST) so newly-listed symbols and newly-added/expired F&O contracts
+are reconciled together.
+
+`get_fno_symbol_roots()` isn't part of the `MarketDataProvider` ABC (a
+future provider that never supports derivatives shouldn't be forced to
+implement it) but both real providers today do —
+`FnoRootsProvider` below is a local structural type for exactly that,
+consumed here rather than declared on either concrete class.
 """
+
+from typing import Protocol
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.providers.base_provider import ProviderError
-from app.providers.fivepaisa_provider import FivePaisaProvider
 from app.repositories.fno_universe_repository import FnoUniverseRepository
 from app.repositories.market_repository import SymbolRepository
 from app.scheduler.service import SchedulerService
@@ -18,9 +26,15 @@ from app.scheduler.service import SchedulerService
 JOB_ID_FNO_UNIVERSE_REFRESH = "fno_universe_refresh"
 
 
+class FnoRootsProvider(Protocol):
+    def is_connected(self) -> bool: ...
+    async def connect(self) -> None: ...
+    async def get_fno_symbol_roots(self) -> set[str]: ...
+
+
 def register_universe_jobs(
     scheduler_service: SchedulerService,
-    provider: FivePaisaProvider,
+    provider: FnoRootsProvider,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async def _refresh_job() -> None:

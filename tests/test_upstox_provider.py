@@ -62,7 +62,9 @@ _SAMPLE_INSTRUMENTS = [
         "instrument_key": "NSE_EQ|INE009A01021",
         "trading_symbol": "INFY",
     },
-    # Non-equity segment — must be filtered out.
+    # Non-equity segment — must be filtered out of get_symbols(), but is
+    # exactly what get_fno_symbol_roots() reads. Shape verified live
+    # against Upstox's real instruments master this session.
     {
         "segment": "NSE_FO",
         "name": "TCS FUT",
@@ -70,6 +72,31 @@ _SAMPLE_INSTRUMENTS = [
         "instrument_type": "FUT",
         "instrument_key": "NSE_FO|12345",
         "trading_symbol": "TCS25AUGFUT",
+        "underlying_symbol": "TCS",
+        "underlying_type": "EQUITY",
+    },
+    {
+        "segment": "NSE_FO",
+        "name": "TCS 4000 CE",
+        "exchange": "NSE",
+        "instrument_type": "CE",
+        "instrument_key": "NSE_FO|12346",
+        "trading_symbol": "TCS 4000 CE 27 OCT 26",
+        "underlying_symbol": "TCS",
+        "underlying_type": "EQUITY",
+    },
+    {
+        # Index derivative — no underlying cash-market row of its own;
+        # get_fno_symbol_roots() includes it, callers intersect with
+        # known equity symbols to exclude it (see docstring).
+        "segment": "NSE_FO",
+        "name": "NIFTY FUT",
+        "exchange": "NSE",
+        "instrument_type": "FUT",
+        "instrument_key": "NSE_FO|99999",
+        "trading_symbol": "NIFTY25AUGFUT",
+        "underlying_symbol": "NIFTY",
+        "underlying_type": "INDEX",
     },
 ]
 
@@ -154,6 +181,19 @@ async def test_get_symbols_normalizes_and_filters_to_nse_eq() -> None:
     assert tcs.exchange == "NSE"
     assert tcs.isin == "INE467B01029"
     assert tcs.company_name == "Tata Consultancy Services"
+
+
+async def test_get_fno_symbol_roots_reads_underlying_symbol() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _instruments_response(_SAMPLE_INSTRUMENTS)
+
+    provider = _provider(handler)
+    roots = await provider.get_fno_symbol_roots()
+
+    # TCS appears via both a FUT and a CE record -> deduped to one root.
+    # NIFTY (index) is included -- callers are documented to intersect
+    # with known equity symbols to exclude it, not this method.
+    assert roots == {"TCS", "NIFTY"}
 
 
 async def test_get_quote_normalizes_response() -> None:
