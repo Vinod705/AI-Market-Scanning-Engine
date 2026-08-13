@@ -2,7 +2,7 @@
 name = "market-intelligence"
 version = "0.1.0"
 description = "AI Market Scanning Engine for the Indian stock market"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 
 [tool.black]
 line-length = 100

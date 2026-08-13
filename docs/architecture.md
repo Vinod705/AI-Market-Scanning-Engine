@@ -1,32 +1,30 @@
-# Architecture — Phase 1
+# Architecture
 
-## Layers
+> This file previously described a Phase-1 skeleton ("no jobs registered
+> yet", `GET /health` as the only route) that no longer matches the
+> codebase. **`README.md` is the maintained, accurate architecture
+> reference** — folder structure, market data / feature engine / scanner /
+> decision & alert engine architecture, API endpoints, auth, Docker, and
+> configuration are all documented there. This file is kept only as a short
+> pointer + the two structural notes below that don't belong in the README.
 
-- **api** — FastAPI routers only. No business logic; delegates to services.
-- **services** — business logic, orchestrates database/scanners/indicators (empty in Phase 1).
-- **database** — async SQLAlchemy engine/session (connection pool) + declarative `Base`.
-  Alembic migrations (`alembic/`) run against a separate sync (`psycopg2`) URL since
-  Alembic's autogenerate tooling does not support async engines directly.
-- **scheduler** — `SchedulerService` wraps `AsyncIOScheduler`, started/stopped from the
-  FastAPI `lifespan` context. No jobs are registered yet; `add_job` is ready for future
-  phases to call.
-- **core** — logging (Loguru sinks to console + rotating `logs/app.log` /
-  `logs/errors.log`), custom `AppError` exception hierarchy, and middleware that tags
-  every request with an id, times it, and routes uncaught exceptions to a JSON 500
-  response.
-- **config** — single `Settings` object (`pydantic-settings`), cached via `lru_cache`,
-  sourced from `.env`.
+See `README.md`, sections:
+- Folder structure
+- Market data architecture
+- Feature engine architecture
+- Scanner engine architecture
+- Decision & Alert engine architecture
+- API endpoints
+- Dashboard, auth, and the F&O/IPO explainability API
 
-## Request lifecycle
+## Notes not covered in the README
 
-1. `request_context_middleware` assigns a request id and starts a timer.
-2. Router handler runs (currently only `GET /health`).
-3. Any `AppError` subclass raised is caught by a dedicated handler and mapped to its
-   `status_code`; anything else falls through to the catch-all handler (500).
-4. Response is logged with method, path, status, and duration.
-
-## Startup/shutdown
-
-`app/main.py::lifespan` — on startup: configure logging, verify DB connectivity
-(non-fatal if unreachable, logged as a warning), start the scheduler. On shutdown: stop
-the scheduler, dispose the SQLAlchemy engine/connection pool.
+- **Migrations run against a sync URL.** Alembic's autogenerate tooling does
+  not support async engines directly, so `alembic/` runs against a separate
+  sync (`psycopg2`) connection string even though the app itself uses an
+  async SQLAlchemy engine at runtime.
+- **Logging.** `app/core/logging.py` configures three Loguru sinks (stdout,
+  rotating `logs/app.log`, `logs/errors.log`). Stdlib `logging` (used by
+  APScheduler, Uvicorn) is intercepted and redirected into the same Loguru
+  sinks rather than going to stderr separately — see `InterceptHandler` in
+  that module.

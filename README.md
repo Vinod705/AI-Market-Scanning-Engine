@@ -373,6 +373,10 @@ The app container runs `alembic upgrade head` on startup (see
 
 ## Running locally without Docker
 
+Requires **Python 3.12** specifically (see `pyproject.toml`'s `requires-python`)
+— `psycopg2-binary` has no prebuilt wheel for newer Python versions and will
+fail to build from source without a local `pg_config`.
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate        # Windows

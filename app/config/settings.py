@@ -258,6 +258,11 @@ class Settings(BaseSettings):
     telegram_request_timeout: float = 15.0
     telegram_max_retries: int = 3
     telegram_retry_backoff_seconds: float = 2.0
+    # /health calls getMe on every configured bot (up to 3) sequentially —
+    # Docker's own container healthcheck only allows 5s (see Dockerfile).
+    # Deliberately much shorter than the real send timeouts above and used
+    # ONLY by TelegramProvider.health_check(), never by send_message.
+    telegram_health_check_timeout_seconds: float = 2.0
 
     # --- Dedicated Telegram bots for IPO and F&O candidate alerts ---
     # Separate credentials so an IPO alert can never physically be sent by

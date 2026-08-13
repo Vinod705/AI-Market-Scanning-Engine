@@ -1,10 +1,36 @@
 """Loguru-based logging configuration."""
 
+import inspect
+import logging
 import sys
+from types import FrameType
 
 from loguru import logger
 
 from app.config.settings import Settings
+
+
+class InterceptHandler(logging.Handler):
+    """Redirects stdlib `logging` records (e.g. APScheduler's own diagnostics
+    - job overlap skips, misfires, exceptions escaping a job) into Loguru so
+    they land in the same app.log/errors.log sinks instead of being dropped
+    silently or going to stderr uncorrelated with the rest of the app's logs.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        level: int | str
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        depth = 0
+        frame: FrameType | None = inspect.currentframe()
+        while frame is not None and (depth == 0 or frame.f_code.co_filename == logging.__file__):
+            frame = frame.f_back
+            depth += 1
+
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 def configure_logging(settings: Settings) -> None:
@@ -12,6 +38,12 @@ def configure_logging(settings: Settings) -> None:
     settings.log_dir.mkdir(parents=True, exist_ok=True)
 
     logger.remove()
+
+    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+    for name in ("apscheduler", "uvicorn", "uvicorn.access", "uvicorn.error"):
+        std_logger = logging.getLogger(name)
+        std_logger.handlers = [InterceptHandler()]
+        std_logger.propagate = False
 
     logger.add(
         sys.stdout,

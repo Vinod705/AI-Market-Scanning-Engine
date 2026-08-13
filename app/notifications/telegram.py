@@ -92,7 +92,10 @@ class TelegramProvider(NotificationProvider):
         if not self.configured:
             return False
         try:
-            response = await self._client.get(f"{self._base_url}/getMe")
+            response = await self._client.get(
+                f"{self._base_url}/getMe",
+                timeout=self._settings.telegram_health_check_timeout_seconds,
+            )
             return response.status_code == 200 and response.json().get("ok") is True
         except httpx.HTTPError:
             return False
