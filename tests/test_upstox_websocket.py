@@ -149,8 +149,9 @@ async def test_parses_ltpc_flushes_completed_candle_and_publishes_event(
     await worker._connect_and_stream()
 
     assert collector.calls == 1  # startup gap-fill backfill
-    assert len(queue.published) == 1
-    assert queue.published[0].source == "intraday_ws"
+    # One event for the REST gap-fill backfill, one for the WS-ticked
+    # completed candle — PipelineWorker must hear about both, not just ticks.
+    assert [e.source for e in queue.published] == ["intraday", "intraday_ws"]
 
     async with session_factory() as session:
         rows = list((await session.execute(select(IntradayPrice))).scalars().all())

@@ -150,7 +150,21 @@ class UpstoxMarketFeed:
                 )
 
                 # Startup recovery / reconnect gap-fill — see module docstring.
-                await self._collector.collect_intraday(symbols=symbols)
+                # Bug fix: this used to write real candles to Postgres but
+                # never told PipelineWorker they'd landed — confirmed live
+                # (Redis stream stayed at its old entry, scanner_results
+                # went stale, across a real restart+backfill). Publish here
+                # too, same as IntradayIngestionWorker does after its own
+                # collect_intraday() calls.
+                gap_fill_result = await self._collector.collect_intraday(symbols=symbols)
+                if gap_fill_result.success_count > 0:
+                    await self._queue.publish(
+                        PipelineEvent(
+                            source="intraday",
+                            symbol_count=gap_fill_result.success_count,
+                            as_of=utc_now(),
+                        )
+                    )
 
                 last_flush = time.monotonic()
                 while not self._stopping:
