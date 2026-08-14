@@ -26,8 +26,24 @@ class SymbolRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get_by_symbol(self, symbol: str, exchange: str = "N") -> Symbol | None:
-        stmt = select(Symbol).where(Symbol.symbol == symbol, Symbol.exchange == exchange)
+    async def get_by_symbol(self, symbol: str, exchange: str | None = None) -> Symbol | None:
+        """`exchange` is an optional disambiguator, not a required match.
+
+        Bug fix: this used to default to `exchange="N"` and `upsert()`
+        always matched on the literal `(symbol, exchange)` pair — safe
+        only as long as every provider spelled the exchange the same way.
+        Confirmed live this session: FivePaisa writes `"N"`, Upstox writes
+        `"NSE"`, so switching primary providers made `upsert()` blind to
+        every existing row and insert a duplicate for it instead of
+        updating in place (2,465 symbols duplicated in one refresh; see
+        the identity-audit findings this data-repair followed). This
+        system is NSE-domestic only in practice (confirmed during that
+        audit — no real cross-exchange collisions), so matching on
+        `symbol` alone is safe and is what every caller that omits
+        `exchange` actually wants."""
+        stmt = select(Symbol).where(Symbol.symbol == symbol)
+        if exchange is not None:
+            stmt = stmt.where(Symbol.exchange == exchange)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_id(self, symbol_id: int) -> Symbol | None:

@@ -43,6 +43,35 @@ async def test_symbol_repository_upsert_is_idempotent(
         assert active[0].company_name == "TCS Ltd"
 
 
+async def test_symbol_repository_upsert_matches_across_exchange_spelling(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Live bug this session: FivePaisa writes exchange="N", Upstox writes
+    exchange="NSE" for the same real symbol. upsert() used to match on the
+    literal (symbol, exchange) pair, so switching primary providers left
+    it blind to the existing row and created a duplicate instead of
+    updating in place — confirmed live (2,465 symbols duplicated in one
+    refresh). Matching by symbol alone fixes it."""
+    async with session_factory() as session:
+        repo = SymbolRepository(session)
+        first = await repo.upsert(
+            ProviderSymbol(symbol="TCS", exchange="N", instrument_token="11536")
+        )
+        await session.commit()
+
+        second = await repo.upsert(
+            ProviderSymbol(symbol="TCS", exchange="NSE", instrument_token="NSE_EQ|INE467B01029")
+        )
+        await session.commit()
+
+        assert second.id == first.id  # same row updated, not a new one
+        assert second.exchange == "NSE"
+        assert second.instrument_token == "NSE_EQ|INE467B01029"
+
+        active = await repo.list_active()
+        assert len(active) == 1
+
+
 async def test_price_repository_upsert_daily_avoids_duplicates(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
