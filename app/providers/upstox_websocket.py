@@ -36,7 +36,11 @@ is not a gap detector, it's avoidance: every successful (re)connect
 immediately triggers a REST backfill (`MarketDataCollector.collect_intraday`)
 for exactly the symbols just (re)subscribed, covering whatever window (if
 any) was actually missed. This is the same mechanism Upstox docs would call
-"startup recovery," just also run on every reconnect, not only once.
+"startup recovery," just also run on every reconnect, not only once. That
+backfill is bounded by `Settings.upstox_ws_gap_fill_timeout_seconds` — it
+must never block the live tick receive loop below it (confirmed live: an
+unbounded version of this call once stalled 14+ hours under concurrent REST
+contention, during which zero ticks were ever received).
 """
 
 import asyncio
@@ -133,18 +137,39 @@ class UpstoxMarketFeed:
                 ping_interval=self._settings.upstox_ws_ping_interval_seconds,
                 ping_timeout=self._settings.upstox_ws_ping_timeout_seconds,
             ) as ws:
-                await ws.send(
-                    json.dumps(
-                        {
-                            "guid": str(uuid.uuid4()),
-                            "method": "sub",
-                            "data": {
-                                "mode": self._settings.upstox_ws_mode,
-                                "instrumentKeys": instrument_keys,
-                            },
-                        }
+                # Bug fix: this used to send the subscribe message as a str,
+                # which the `websockets` library auto-frames as WebSocket
+                # TEXT. Upstox's v3 server silently ignores a text-framed
+                # subscribe — confirmed live this session: connect/authorize
+                # always succeeded and the connection stayed open, but zero
+                # LTPC ticks ever arrived for any instrument, regardless of
+                # count or liquidity, only the unconditional market_info
+                # heartbeat. The real Upstox SDK sends this as a BINARY
+                # frame (`json.dumps(...).encode() ` with an explicit binary
+                # opcode) — encoding to bytes here makes `websockets` frame
+                # it the same way, and ticks start flowing immediately.
+                #
+                # Bug fix: a single `sub` message over
+                # `upstox_ws_subscribe_batch_size` instrumentKeys is also
+                # silently dropped (no error frame — the whole subscription
+                # becomes a no-op) — confirmed live via binary search: 5,000
+                # keys in one message works, 5,250+ does not. Splitting into
+                # multiple binary `sub` messages, each within the confirmed
+                # limit, keeps every instrument subscribed.
+                for start in range(0, len(instrument_keys), self._settings.upstox_ws_subscribe_batch_size):
+                    batch = instrument_keys[start : start + self._settings.upstox_ws_subscribe_batch_size]
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "guid": str(uuid.uuid4()),
+                                "method": "sub",
+                                "data": {
+                                    "mode": self._settings.upstox_ws_mode,
+                                    "instrumentKeys": batch,
+                                },
+                            }
+                        ).encode("utf-8")
                     )
-                )
                 logger.info(
                     "Upstox market feed subscribed to {count} symbols", count=len(instrument_keys)
                 )
@@ -156,15 +181,34 @@ class UpstoxMarketFeed:
                 # went stale, across a real restart+backfill). Publish here
                 # too, same as IntradayIngestionWorker does after its own
                 # collect_intraday() calls.
-                gap_fill_result = await self._collector.collect_intraday(symbols=symbols)
-                if gap_fill_result.success_count > 0:
-                    await self._queue.publish(
-                        PipelineEvent(
-                            source="intraday",
-                            symbol_count=gap_fill_result.success_count,
-                            as_of=utc_now(),
-                        )
+                #
+                # Bug fix: this call used to have no timeout — confirmed
+                # live it can stall for many hours under concurrent REST
+                # contention with IntradayIngestionWorker's own sweep,
+                # during which the receive loop below never even starts
+                # (no ticks, no stale-reconnect, connection just sits
+                # open). Bounding it means a slow/contended backfill costs
+                # this cycle's backfill, not the live tick path.
+                try:
+                    gap_fill_result = await asyncio.wait_for(
+                        self._collector.collect_intraday(symbols=symbols),
+                        timeout=self._settings.upstox_ws_gap_fill_timeout_seconds,
                     )
+                except TimeoutError:
+                    logger.warning(
+                        "Upstox market feed: gap-fill backfill exceeded {s}s, "
+                        "proceeding without it",
+                        s=self._settings.upstox_ws_gap_fill_timeout_seconds,
+                    )
+                else:
+                    if gap_fill_result.success_count > 0:
+                        await self._queue.publish(
+                            PipelineEvent(
+                                source="intraday",
+                                symbol_count=gap_fill_result.success_count,
+                                as_of=utc_now(),
+                            )
+                        )
 
                 last_flush = time.monotonic()
                 while not self._stopping:

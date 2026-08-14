@@ -12,9 +12,13 @@ guessed. What's implemented, and why the rest isn't:
   dashboard — there is no TOTP-style automatable headless login the way
   `FivePaisaProvider` has. `connect()` therefore treats
   `Settings.upstox_access_token` as a pre-obtained, static credential and
-  validates it with `GET /user/profile`, rather than performing a login of
-  its own. Because the token is static, an expired/invalid token (401) can't
-  be fixed by retrying within this process — see `_handle_response`.
+  validates it with `GET /v3/feed/market-data-feed/authorize` (not
+  `/user/profile` — Account/Profile APIs require a static IP on the
+  Upstox account, confirmed live with a genuinely valid Analytics Token;
+  the authorize endpoint needs only a valid bearer token), rather than
+  performing a login of its own. Because the token is static, an
+  expired/invalid token (401) can't be fixed by retrying within this
+  process — see `_handle_response`.
 - **Instruments**: the public, unauthenticated gzipped JSON master
   (`Settings.upstox_instruments_url`), filtered to the `NSE_EQ` segment for
   `get_symbols()`. The same file also carries `NSE_FO` (derivatives) records
@@ -81,9 +85,17 @@ class UpstoxProvider(MarketDataProvider):
         if not self._settings.upstox_configured:
             raise ProviderError("Upstox access token is not configured", retryable=False)
 
+        # Not /user/profile: Account/Profile APIs require a static IP on
+        # file with Upstox (confirmed live this session — UDAPI1221 on a
+        # genuinely valid Analytics Token), which this local dev
+        # environment doesn't have. The v3 market-data-feed authorize
+        # endpoint needs no extra params, requires only a valid bearer
+        # token, and is confirmed live-permitted for the Analytics Token —
+        # a real market-data connectivity check instead of an
+        # account-metadata one this token category can never pass here.
         try:
             response = await self._client.get(
-                f"{self._settings.upstox_base_url}/user/profile",
+                self._settings.upstox_ws_authorize_url,
                 headers=self._headers(),
                 timeout=self._settings.upstox_request_timeout,
             )

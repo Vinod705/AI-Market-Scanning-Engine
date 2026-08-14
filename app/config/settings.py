@@ -141,7 +141,17 @@ class Settings(BaseSettings):
     upstox_ws_mode: str = "ltpc"
     upstox_ws_authorize_url: str = "https://api.upstox.com/v3/feed/market-data-feed/authorize"
     upstox_ws_ping_interval_seconds: float = 20.0
-    upstox_ws_ping_timeout_seconds: float = 20.0
+    # Wider than the ping interval on purpose: confirmed live this session
+    # that the `websockets` library's own keepalive pong can miss a tight
+    # 20s deadline under heavy concurrent load (gap-fill backfill across
+    # thousands of symbols sharing the same event loop as everything
+    # else), causing the client to self-close with "1011 keepalive ping
+    # timeout" even though the connection and the Upstox side were fine —
+    # a false-positive disconnect, not a real dead connection. Pings still
+    # go out every 20s (unchanged) so a genuinely dead connection is still
+    # detected reasonably fast; this only gives a slow-but-alive pong more
+    # room before the client gives up on it.
+    upstox_ws_ping_timeout_seconds: float = 45.0
     # No message at all (not just no ticks for one symbol) within this
     # window is treated as a stale connection and forces a reconnect.
     upstox_ws_stale_threshold_seconds: float = 30.0
@@ -150,6 +160,21 @@ class Settings(BaseSettings):
     # How often completed 1-minute candles are batch-written to Postgres and
     # a PipelineEvent published — not per-tick, see app.providers.upstox_websocket.
     upstox_ws_flush_interval_seconds: float = 15.0
+    # Bounds the post-(re)connect REST backfill (see module docstring on
+    # app.providers.upstox_websocket) so it can never block the live tick
+    # receive loop indefinitely — confirmed live this session: with no
+    # timeout, this call stalled for 14+ hours under concurrent REST
+    # contention with IntradayIngestionWorker's own sweep, and the
+    # connection never once entered its receive loop. On timeout, the
+    # backfill is abandoned for that cycle (its own next cycle will retry)
+    # rather than delaying live ticks any further.
+    upstox_ws_gap_fill_timeout_seconds: float = 60.0
+    # A single `sub` message over this many instrumentKeys is silently
+    # dropped by Upstox's v3 feed — no error frame, the whole subscription
+    # just becomes a no-op. Confirmed live this session via binary search:
+    # 5,000 keys in one message works, 5,250+ does not. Kept at the
+    # confirmed-safe boundary rather than the unconfirmed higher edge.
+    upstox_ws_subscribe_batch_size: int = 5000
 
     # Once the WS feed is live and covering the continuous case,
     # IntradayIngestionWorker's REST sweep only needs to run as an

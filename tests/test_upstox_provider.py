@@ -119,7 +119,16 @@ async def test_connect_rejects_without_access_token() -> None:
 async def test_connect_success() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer test-token"
-        return httpx.Response(200, json={"status": "success", "data": {"user_id": "AB1234"}})
+        # Not /user/profile — that requires a static IP on the Upstox
+        # account and 401s even for a genuinely valid Analytics Token.
+        assert str(request.url) == "https://api.upstox.com/v3/feed/market-data-feed/authorize"
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {"authorized_redirect_uri": "wss://example.invalid/feed"},
+            },
+        )
 
     provider = _provider(handler)
     await provider.connect()

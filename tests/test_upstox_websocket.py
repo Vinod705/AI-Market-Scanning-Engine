@@ -10,7 +10,9 @@ not fabricated bytes.
 
 import asyncio
 import contextlib
+import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import httpx
 import websockets
@@ -57,6 +59,25 @@ class _FakeCollector:
         return CollectorRunResult(symbols_processed=count, success_count=count)
 
 
+class _HangingCollector:
+    """Simulates a collect_intraday() call that never returns on its own —
+    the exact live-observed condition (stuck 14+ hours under concurrent
+    REST contention) the gap-fill timeout guards against."""
+
+    def __init__(self) -> None:
+        self.started = False
+        self.cancelled = False
+
+    async def collect_intraday(self, symbols: list[object] | None = None) -> CollectorRunResult:
+        self.started = True
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("unreachable")
+
+
 class _FakeConnection:
     """Stands in for a `websockets` connection. `recv()` returns queued
     frames in order; once exhausted it hangs forever (simulating a live but
@@ -67,9 +88,9 @@ class _FakeConnection:
     def __init__(self, frames: list[bytes], *, closes: bool = False) -> None:
         self._frames = list(frames)
         self._closes = closes
-        self.sent: list[str] = []
+        self.sent: list[bytes] = []
 
-    async def send(self, message: str) -> None:
+    async def send(self, message: bytes) -> None:
         self.sent.append(message)
 
     async def recv(self) -> bytes:
@@ -110,6 +131,7 @@ def _settings(**overrides: object) -> Settings:
         upstox_ws_reconnect_backoff_seconds=0.01,
         upstox_ws_reconnect_max_backoff_seconds=0.02,
         upstox_ws_flush_interval_seconds=999.0,  # only the shutdown/exit flush should fire
+        upstox_ws_gap_fill_timeout_seconds=5.0,
     )
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]
@@ -148,6 +170,13 @@ async def test_parses_ltpc_flushes_completed_candle_and_publishes_event(
 
     await worker._connect_and_stream()
 
+    # Bug fix regression: Upstox's v3 server silently ignores a text-framed
+    # subscribe — confirmed live this session (connection stayed open,
+    # zero LTPC ticks ever arrived, for any instrument count). Sending
+    # bytes makes `websockets` frame it as BINARY, matching the real SDK.
+    assert isinstance(conn.sent[0], bytes)
+    assert json.loads(conn.sent[0])["method"] == "sub"
+
     assert collector.calls == 1  # startup gap-fill backfill
     # One event for the REST gap-fill backfill, one for the WS-ticked
     # completed candle — PipelineWorker must hear about both, not just ticks.
@@ -159,6 +188,124 @@ async def test_parses_ltpc_flushes_completed_candle_and_publishes_event(
     assert float(rows[0].open) == 100.0
     assert float(rows[0].close) == 105.0
     assert rows[0].volume == 15
+
+
+async def _run_subscribe_with_symbol_count(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch, *, count: int, batch_size: int
+) -> list[bytes]:
+    """Drives just the subscribe step with `count` synthetic instrument
+    keys, bypassing real DB symbol rows (irrelevant to batching math, and
+    seeding thousands of rows per test would be slow for no benefit)."""
+    keys = [f"NSE_EQ|KEY{i:06d}" for i in range(count)]
+    fake_symbols = [
+        SimpleNamespace(id=i, symbol=f"SYM{i}", instrument_token=k) for i, k in enumerate(keys)
+    ]
+
+    async def fake_active_symbols(self: UpstoxMarketFeed) -> list[SimpleNamespace]:
+        return fake_symbols
+
+    monkeypatch.setattr(UpstoxMarketFeed, "_active_symbols", fake_active_symbols)
+
+    conn = _FakeConnection([], closes=True)
+    monkeypatch.setattr(
+        "app.providers.upstox_websocket.websockets.connect", lambda url, **kw: conn
+    )
+
+    worker = UpstoxMarketFeed(
+        _settings(upstox_ws_subscribe_batch_size=batch_size),
+        _FakeCollector(),
+        session_factory,
+        FakePipelineEventQueue(),
+        http_client=_authorize_client(),
+    )
+    await worker._connect_and_stream()
+    return conn.sent
+
+
+async def test_subscribe_batches_under_limit_sends_one_message(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    sent = await _run_subscribe_with_symbol_count(
+        session_factory, monkeypatch, count=4999, batch_size=5000
+    )
+    assert len(sent) == 1
+    assert len(json.loads(sent[0])["data"]["instrumentKeys"]) == 4999
+
+
+async def test_subscribe_batches_exactly_at_limit_sends_one_message(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    sent = await _run_subscribe_with_symbol_count(
+        session_factory, monkeypatch, count=5000, batch_size=5000
+    )
+    assert len(sent) == 1
+    assert len(json.loads(sent[0])["data"]["instrumentKeys"]) == 5000
+
+
+async def test_subscribe_batches_one_over_limit_sends_two_messages(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    sent = await _run_subscribe_with_symbol_count(
+        session_factory, monkeypatch, count=5001, batch_size=5000
+    )
+    assert len(sent) == 2
+    assert len(json.loads(sent[0])["data"]["instrumentKeys"]) == 5000
+    assert len(json.loads(sent[1])["data"]["instrumentKeys"]) == 1
+
+
+async def test_subscribe_batches_9598_symbols_into_5000_and_4598_no_loss_no_duplication(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    """The exact live scenario this fix was written for."""
+    sent = await _run_subscribe_with_symbol_count(
+        session_factory, monkeypatch, count=9598, batch_size=5000
+    )
+    assert len(sent) == 2
+
+    for message in sent:
+        assert isinstance(message, bytes)  # every batch stays a BINARY frame
+        body = json.loads(message)
+        assert body["method"] == "sub"
+        assert body["data"]["mode"] == "ltpc"  # subscription schema/mode unchanged
+
+    batch1 = json.loads(sent[0])["data"]["instrumentKeys"]
+    batch2 = json.loads(sent[1])["data"]["instrumentKeys"]
+    assert len(batch1) == 5000
+    assert len(batch2) == 4598
+
+    expected = [f"NSE_EQ|KEY{i:06d}" for i in range(9598)]
+    assert batch1 + batch2 == expected  # no key lost, none duplicated, order preserved
+    assert len(set(batch1 + batch2)) == 9598  # no duplicates
+
+
+async def test_gap_fill_timeout_does_not_block_receive_loop(
+    session_factory: async_sessionmaker[AsyncSession], monkeypatch
+) -> None:
+    """Live-observed defect: with no timeout, this call once stalled 14+
+    hours under concurrent REST contention and the receive loop below it
+    never even started. Bounding it must cancel the stuck backfill and let
+    the connection proceed instead of hanging indefinitely."""
+    await _seed_symbol(session_factory)
+    conn = _FakeConnection([], closes=True)
+    monkeypatch.setattr(
+        "app.providers.upstox_websocket.websockets.connect", lambda url, **kw: conn
+    )
+
+    collector = _HangingCollector()
+    queue = FakePipelineEventQueue()
+    worker = UpstoxMarketFeed(
+        _settings(upstox_ws_gap_fill_timeout_seconds=0.05),
+        collector,
+        session_factory,
+        queue,
+        http_client=_authorize_client(),
+    )
+
+    await asyncio.wait_for(worker._connect_and_stream(), timeout=2.0)
+
+    assert collector.started is True
+    assert collector.cancelled is True  # asyncio.wait_for actually cancels the stuck call
+    assert queue.published == []  # no gap-fill event — it never completed, nothing to report
 
 
 async def test_no_active_symbols_does_not_crash() -> None:
