@@ -12,7 +12,12 @@ from `Settings` rather than being hardcoded:
   (actionable now, not "watch and wait")
 """
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config.settings import Settings
+from app.models.symbol import Symbol
+from app.repositories.feature_repository import DailyFeatureRepository
+from app.repositories.market_repository import PriceRepository
 from app.scanner.base_scanner import BaseScanner
 from app.scanner.models import ScanContext, ScannerContext, ScanOutcome, ValidationResult
 from app.scanner.validator import ScannerValidator
@@ -29,6 +34,34 @@ class BreakoutScanner(BaseScanner):
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+
+    async def build_context_bulk(
+        self, session: AsyncSession, symbols: list[Symbol]
+    ) -> dict[int, ScannerContext | None]:
+        """True bulk version of `BaseScanner.build_context` — two queries
+        for the whole LISTED universe instead of two per symbol. Confirmed
+        live this session: this scanner alone accounted for 73.60s /
+        22,047 queries of a 154.54s pipeline cycle (9,598 symbols) —
+        by far the dominant cost. Produces identical `ScanContext` objects
+        to calling `build_context` per symbol; only the query pattern
+        changes."""
+        symbol_ids = [s.id for s in symbols]
+        features_by_id = await DailyFeatureRepository(session).get_latest_bulk(symbol_ids)
+        prices_by_id = await PriceRepository(session).get_latest_daily_bulk(symbol_ids)
+
+        contexts: dict[int, ScannerContext | None] = {}
+        for symbol in symbols:
+            features = features_by_id.get(symbol.id)
+            if features is None:
+                contexts[symbol.id] = None
+                continue
+            latest_price = prices_by_id.get(symbol.id)
+            contexts[symbol.id] = ScanContext(
+                symbol=symbol,
+                features=features,
+                price=latest_price.close if latest_price else None,
+            )
+        return contexts
 
     def validate(self, context: ScannerContext) -> ValidationResult:
         assert isinstance(context, ScanContext)

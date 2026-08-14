@@ -60,11 +60,15 @@ class SymbolRepository:
         return list((await self._session.execute(stmt)).scalars().all())
 
     async def upsert(self, provider_symbol: ProviderSymbol) -> Symbol:
-        existing = await self.get_by_symbol(provider_symbol.symbol, provider_symbol.exchange)
+        # Matched by symbol alone, not (symbol, exchange) — see
+        # get_by_symbol's docstring for why a provider-specific exchange
+        # match broke this across a primary-provider switch.
+        existing = await self.get_by_symbol(provider_symbol.symbol)
         if existing is None:
             existing = Symbol(symbol=provider_symbol.symbol, exchange=provider_symbol.exchange)
             self._session.add(existing)
 
+        existing.exchange = provider_symbol.exchange
         existing.instrument_token = provider_symbol.instrument_token
         existing.company_name = provider_symbol.company_name
         existing.sector = provider_symbol.sector
@@ -145,6 +149,43 @@ class PriceRepository:
             .limit(1)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_daily_bulk(self, symbol_ids: list[int]) -> dict[int, DailyPrice]:
+        """Bulk equivalent of `get_latest_daily` — see
+        `DailyFeatureRepository.get_latest_bulk`'s docstring for why."""
+        if not symbol_ids:
+            return {}
+        row_number = (
+            func.row_number()
+            .over(partition_by=DailyPrice.symbol_id, order_by=DailyPrice.date.desc())
+            .label("rn")
+        )
+        ranked = (
+            select(DailyPrice.id, row_number).where(DailyPrice.symbol_id.in_(symbol_ids)).subquery()
+        )
+        stmt = select(DailyPrice).join(ranked, DailyPrice.id == ranked.c.id).where(ranked.c.rn == 1)
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return {row.symbol_id: row for row in rows}
+
+    async def list_symbol_ids_with_intraday_on(
+        self, symbol_ids: list[int], day: date_
+    ) -> set[int]:
+        """Bulk equivalent of calling `get_intraday_for_date` per symbol just
+        to check "does this symbol have any bars today" — same day-range
+        boundaries as `get_intraday_for_date`, but one query for the whole
+        batch, returning only symbol_ids (not full rows)."""
+        if not symbol_ids:
+            return set()
+        stmt = (
+            select(IntradayPrice.symbol_id)
+            .where(
+                IntradayPrice.symbol_id.in_(symbol_ids),
+                IntradayPrice.datetime >= datetime.combine(day, datetime.min.time()),
+                IntradayPrice.datetime < datetime.combine(day, datetime.max.time()),
+            )
+            .distinct()
+        )
+        return set((await self._session.execute(stmt)).scalars().all())
 
     async def get_daily_history(self, symbol_id: int, limit: int = 500) -> list[DailyPrice]:
         """Most recent `limit` daily bars for `symbol_id`, oldest first (ready for vectorized calc)."""

@@ -78,6 +78,31 @@ class DailyFeatureRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_latest_bulk(self, symbol_ids: list[int]) -> dict[int, DailyFeature]:
+        """Bulk equivalent of `get_latest` — one query for every symbol in
+        `symbol_ids` instead of one query per symbol. Added to fix a
+        measured throughput bottleneck: FeatureEngine/ScannerManager were
+        each issuing 1-2 queries per symbol just to answer "does this
+        symbol need work" over the full active universe (confirmed live:
+        ~9,598 symbols, ~12,000+ queries for a single pipeline cycle)."""
+        if not symbol_ids:
+            return {}
+        row_number = (
+            func.row_number()
+            .over(partition_by=DailyFeature.symbol_id, order_by=DailyFeature.date.desc())
+            .label("rn")
+        )
+        ranked = (
+            select(DailyFeature.id, row_number)
+            .where(DailyFeature.symbol_id.in_(symbol_ids))
+            .subquery()
+        )
+        stmt = select(DailyFeature).join(ranked, DailyFeature.id == ranked.c.id).where(
+            ranked.c.rn == 1
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return {row.symbol_id: row for row in rows}
+
     async def get_history(self, symbol_id: int, limit: int = 100) -> list[DailyFeature]:
         stmt = (
             select(DailyFeature)

@@ -55,6 +55,21 @@ class BaseScanner(ABC):
             symbol=symbol, features=features, price=latest_price.close if latest_price else None
         )
 
+    async def build_context_bulk(
+        self, session: AsyncSession, symbols: list[Symbol]
+    ) -> dict[int, ScannerContext | None]:
+        """Bulk equivalent of `build_context` — called once per scanner run
+        instead of once per symbol. Default implementation just loops
+        `build_context` (byte-for-byte the previous per-symbol behavior,
+        zero change) — safe for the F&O/IPO/pre_breakout candidate
+        scanners, which override `build_context` with richer logic
+        (fundamentals, session data) this default has no way to bulk-fetch
+        generically. `BreakoutScanner` overrides this with a true bulk
+        implementation since it's the one confirmed live this session to
+        be the actual bottleneck (LISTED universe, up to ~9,598 symbols;
+        the other three scan a few hundred and were never the problem)."""
+        return {symbol.id: await self.build_context(session, symbol) for symbol in symbols}
+
     @abstractmethod
     def validate(self, context: ScannerContext) -> ValidationResult:
         """Check `context` has what this scanner needs. Called before `scan()`;

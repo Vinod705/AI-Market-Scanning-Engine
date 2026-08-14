@@ -66,6 +66,30 @@ class ScannerResultRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none() is not None
 
+    async def exists_bulk(
+        self, pairs: list[tuple[int, date_]], scanner_name: str
+    ) -> set[tuple[int, date_]]:
+        """Bulk equivalent of `exists_for_date` — one query for the whole
+        batch of (symbol_id, scan_date) pairs instead of one query per
+        pair. `scan_date` can differ across symbols (it's each symbol's
+        latest feature date, not a single shared "today"), so this filters
+        by the actual symbol_id/date sets present in `pairs` rather than
+        assuming one shared date, then intersects with `pairs` itself so a
+        symbol_id/date combination that matches only by coincidence (not a
+        real requested pair) can never produce a false positive."""
+        if not pairs:
+            return set()
+        symbol_ids = {symbol_id for symbol_id, _ in pairs}
+        dates = {date for _, date in pairs}
+        stmt = select(ScannerResult.symbol_id, ScannerResult.date).where(
+            ScannerResult.scanner_name == scanner_name,
+            ScannerResult.symbol_id.in_(symbol_ids),
+            ScannerResult.date.in_(dates),
+        )
+        rows = (await self._session.execute(stmt)).all()
+        existing = {(row.symbol_id, row.date) for row in rows}
+        return existing & set(pairs)
+
     async def list_results(
         self,
         *,

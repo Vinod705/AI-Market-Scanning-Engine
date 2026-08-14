@@ -120,7 +120,32 @@ class FeatureEngine:
 
         benchmark_df = await self._load_benchmark()
 
+        # Bug fix: this used to call _run_daily_for_symbol() — which itself
+        # re-checks "is this symbol already up to date" — for every active
+        # symbol, one DB round trip (or two) at a time. Confirmed live this
+        # session: ~9,598 symbols, ~12,000+ queries, ~37s, just to discover
+        # nearly all of them had nothing to do. This bulk pre-filter
+        # answers the exact same question — latest feature date >= latest
+        # price date — in two queries for the whole universe, and is a
+        # pure superset-safe filter: any symbol it skips is guaranteed to
+        # also return 0 from the unchanged per-symbol logic below, so
+        # results are identical, just without the redundant round trips.
+        symbol_ids = [s.id for s in symbols]
+        async with self._session_factory() as session:
+            latest_prices = await PriceRepository(session).get_latest_daily_bulk(symbol_ids)
+            latest_features = await DailyFeatureRepository(session).get_latest_bulk(symbol_ids)
+
+        to_process = []
         for symbol in symbols:
+            latest_price = latest_prices.get(symbol.id)
+            if latest_price is None:
+                continue
+            latest_feature = latest_features.get(symbol.id)
+            if latest_feature is not None and latest_feature.date >= latest_price.date:
+                continue
+            to_process.append(symbol)
+
+        for symbol in to_process:
             try:
                 updated = await self._run_daily_for_symbol(symbol.id, benchmark_df)
                 if updated:
@@ -149,6 +174,22 @@ class FeatureEngine:
         # Session features are keyed by the NSE trading day (IST), not the
         # UTC calendar day the underlying instant happens to fall on.
         today = to_market_time(utc_now(), self._market_timezone).date()
+
+        # Bug fix: same throughput issue as run_daily() above —
+        # _run_session_for_symbol()'s own "if not candles: return False"
+        # early-exit was being reached via a per-symbol query for every
+        # active symbol. This bulk-answers "which symbols have any bar
+        # today at all" in one query, using the identical day-range
+        # boundaries _run_session_for_symbol()'s own query uses, so it's an
+        # exact (not approximate) pre-filter — no behavior change, just
+        # fewer round trips for the (usually large) majority with nothing
+        # to do yet.
+        symbol_ids = [s.id for s in symbols]
+        async with self._session_factory() as session:
+            has_data_today = await PriceRepository(session).list_symbol_ids_with_intraday_on(
+                symbol_ids, today
+            )
+        symbols = [s for s in symbols if s.id in has_data_today]
 
         for symbol in symbols:
             try:
