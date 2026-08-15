@@ -360,6 +360,15 @@ class Settings(BaseSettings):
     signal_fusion_weight_news: float = 0.10
     signal_fusion_weight_fundamentals: float = 0.10
 
+    # --- Momentum decision pipeline (Phase 13) ---
+    # A judgment-call threshold (not a validated statistic), same honest
+    # framing as the signal fusion / market regime thresholds above:
+    # below this SignalFusionResult.confidence (% of configured weight
+    # backed by real data), app.decision.momentum_decision_engine rejects
+    # outright rather than trust a momentum-state transition built on
+    # mostly-missing evidence.
+    pipeline_min_confidence_pct: float = 40.0
+
     # --- Technical Score (0-100, reuses Phase 3 daily/session features; should sum to 1.0) ---
     technical_weight_trend: float = 0.25
     technical_weight_momentum: float = 0.20
