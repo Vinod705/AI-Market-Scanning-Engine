@@ -1,5 +1,7 @@
 """Tests for the per-category feature calculators in app/features/*/calculator.py."""
 
+from decimal import Decimal
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -170,6 +172,56 @@ def test_session_calculator_computes_opening_range_and_day_high_low() -> None:
     assert result.opening_range_high is not None
     assert result.session_vwap is not None
     assert result.day_high >= result.opening_range_high
+
+
+def test_session_calculator_opening_range_uses_ist_market_open_not_utc() -> None:
+    """Bug fix regression: market open (9:15) is IST, not UTC. Confirmed
+    live this session — with UTC-stored intraday data (IntradayPrice.
+    datetime's real storage convention), the old code localized "9:15"
+    directly into UTC instead of converting real IST open (09:15 IST =
+    03:45 UTC), so "opening range" was actually computed against
+    09:15-09:30 UTC (14:45-15:00 IST). A real session_features row showed
+    the signature: opening_range_high/low exactly equal to day_high/low,
+    because the (wrongly-placed) window ended up covering the whole
+    available session instead of the true first 15 minutes."""
+    # Real market open in UTC: 09:15 IST = 03:45 UTC.
+    times = pd.date_range("2026-01-05 03:45", periods=120, freq="min", tz="UTC")
+    # Price rises steadily through the session, so day_high sits at the
+    # very end — opening_range_high must reflect only the first 15
+    # minutes (indices 0-14), which is far lower, if the window is
+    # correctly placed at the real open.
+    close = 100 + np.arange(len(times)) * 0.1
+    df = pd.DataFrame(
+        {"open": close, "high": close + 0.05, "low": close - 0.05, "close": close, "volume": 1000},
+        index=times,
+    )
+    result = SessionFeatureCalculator.calculate(df, market_timezone="Asia/Kolkata")
+
+    assert result.opening_range_high is not None
+    assert result.opening_range_high < Decimal("102")  # true first-15-min high ~= 101.45
+    assert result.day_high is not None
+    assert result.day_high > Decimal("111")  # true day high (last bar) ~= 111.95
+    # The invariant the bug violated: a correctly-placed opening range
+    # must be strictly narrower than the full day, not equal to it.
+    assert result.opening_range_high < result.day_high
+
+
+def test_session_calculator_naive_index_still_treated_as_market_local() -> None:
+    """Naive (tz-less) input — e.g. test fixtures already expressed in
+    market-local clock time — must behave exactly as before the fix: no
+    tz conversion attempted, compared naive-to-naive."""
+    times = pd.date_range("2026-01-05 09:15", periods=30, freq="min")  # naive, no tz
+    close = 100 + np.arange(len(times)) * 0.1
+    df = pd.DataFrame(
+        {"open": close, "high": close + 0.05, "low": close - 0.05, "close": close, "volume": 1000},
+        index=times,
+    )
+    result = SessionFeatureCalculator.calculate(df, market_timezone="Asia/Kolkata")
+
+    assert result.opening_range_high is not None
+    assert result.opening_range_high < Decimal("102")  # first 15 minutes only
+    assert result.day_high is not None
+    assert result.day_high > Decimal("102")  # later bars go higher
 
 
 def test_session_calculator_empty_returns_none() -> None:

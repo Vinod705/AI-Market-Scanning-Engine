@@ -10,12 +10,13 @@ across dates the way `calculate(df) -> DataFrame` does elsewhere.
 from dataclasses import dataclass
 from datetime import time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from app.features import indicators
 
-_MARKET_OPEN = time(9, 15)
+_MARKET_OPEN = time(9, 15)  # IST — see calculate()'s tz handling below
 _OPENING_RANGE_MINUTES = 15
 _INITIAL_BALANCE_MINUTES = 60
 
@@ -33,15 +34,32 @@ class SessionFeatures:
 
 class SessionFeatureCalculator:
     @staticmethod
-    def calculate(intraday_df: pd.DataFrame) -> SessionFeatures:
+    def calculate(intraday_df: pd.DataFrame, market_timezone: str = "Asia/Kolkata") -> SessionFeatures:
         """`intraday_df` must be indexed by datetime, sorted ascending, for one trading day."""
         if intraday_df.empty:
             return SessionFeatures(None, None, None, None, None, None, None)
 
         session_date = intraday_df.index[0].date()
-        market_open_dt = pd.Timestamp.combine(session_date, _MARKET_OPEN)
-        if market_open_dt.tzinfo is None and intraday_df.index.tz is not None:
-            market_open_dt = market_open_dt.tz_localize(intraday_df.index.tz)
+        naive_market_open = pd.Timestamp.combine(session_date, _MARKET_OPEN)
+        if intraday_df.index.tz is not None:
+            # Bug fix: this used to tz_localize the naive "9:15" directly
+            # into intraday_df's own tz (UTC, per IntradayPrice.datetime's
+            # storage convention) — treating market open as 09:15 UTC
+            # (14:45 IST) instead of the real 09:15 IST (03:45 UTC).
+            # Confirmed live: a real session_features row's
+            # opening_range_high/low exactly matched day_high/day_low, the
+            # signature of "opening range" actually covering the whole
+            # available session rather than the true first 15 minutes.
+            # _MARKET_OPEN is IST — localize into IST first, then convert
+            # into whatever tz the data is actually in, so the boundary
+            # means the same real-world instant, not the same clock digits.
+            market_open_dt = naive_market_open.tz_localize(ZoneInfo(market_timezone)).tz_convert(
+                intraday_df.index.tz
+            )
+        else:
+            # Naive data (e.g. fixtures already expressed in market-local
+            # clock time) — nothing to convert, compare naive-to-naive.
+            market_open_dt = naive_market_open
 
         opening_range_end = market_open_dt + timedelta(minutes=_OPENING_RANGE_MINUTES)
         initial_balance_end = market_open_dt + timedelta(minutes=_INITIAL_BALANCE_MINUTES)

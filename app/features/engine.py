@@ -264,7 +264,7 @@ class FeatureEngine:
 
             session_repo = SessionFeatureRepository(session)
             intraday_df = _intraday_to_frame(candles)
-            features = SessionFeatureCalculator.calculate(intraday_df)
+            features = SessionFeatureCalculator.calculate(intraday_df, self._market_timezone)
 
             # Last 2 daily bars, oldest first. If the most recent one is
             # already *today* (the daily collector job ran mid-session),
