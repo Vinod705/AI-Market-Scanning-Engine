@@ -1,5 +1,21 @@
-"""TrendlyneFundamentalDataProvider: the primary fundamental-data source
-(Phase 7, extended in the multi-source follow-up).
+"""TrendlyneFundamentalDataProvider: fundamental-data source, Phase 7.
+
+**LEGACY / SECONDARY as of Phase 9**: `UpstoxFundamentalDataProvider` is
+now the primary source in `MultiSourceFundamentalProvider`'s priority
+list (see `app/main.py`) — it uses the same Upstox access token/API
+already relied on for market data, with no separate account or rate-limit
+budget to manage. This class is kept, not deleted: Upstox's fundamentals
+API has no ownership/shareholding endpoints at all (verified live —
+`shareholding`, `shareholding-pattern`, `promoter-holding`, `dividend`,
+`market-cap`, `valuation` all 404), so Trendlyne remains the only source
+for Promoter/FII/DII holding, pledge, PEG, and dividend yield.
+`MultiSourceFundamentalProvider` merges both field-by-field, so this
+provider still contributes real value — it is not a pure fallback that
+only runs when Upstox fails, but it no longer needs to be the primary
+source for the fields Upstox does cover, and is not on any path an alert
+can block on (see `app.fundamentals.queue_service`'s module docstring
+and `app/decision/evaluator.py`, which has no fundamental-data dependency
+at all — decisions and alerts have always been technical-score-only).
 
 Combines three Trendlyne MCP tool calls per symbol, each independently
 fault-isolated (one failing never blanks out what the others returned):

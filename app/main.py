@@ -39,6 +39,7 @@ from app.fundamentals.provider import FundamentalDataProvider
 from app.fundamentals.queue_service import FundamentalQueueService
 from app.fundamentals.trendlyne_provider import TrendlyneFundamentalDataProvider
 from app.fundamentals.unavailable_provider import UnavailableFundamentalDataProvider
+from app.fundamentals.upstox_fundamental_provider import UpstoxFundamentalDataProvider
 from app.notifications.manager import NotificationManager
 from app.notifications.router import NotificationRouter
 from app.notifications.telegram import TelegramProvider
@@ -140,21 +141,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Ingestion/pipeline workers will keep retrying once started."
         )
 
-    # Multi-source fundamental intelligence (Phase 7 + follow-up). Trendlyne
-    # MCP is the only source with an authorized, server-callable interface
-    # — TradingView and 5paisa were both investigated and neither has one
-    # (see the Phase 7 final report), so the priority list has one entry
-    # today. MultiSourceFundamentalProvider still does real field-by-field
-    # priority merging so a second/third source can be added here later
-    # without touching the candidate/decision/alert pipeline. Falls back to
-    # the honest UnavailableFundamentalDataProvider (UNKNOWN, never a
+    # Multi-source fundamental intelligence (Phase 7, extended Phase 9).
+    # Upstox is now primary — verified live: 4 real Company Fundamentals
+    # endpoints (income-statement, cash-flow, key-ratios; balance-sheet is
+    # real but maps to no FundamentalData field) exist and require no
+    # separate account/rate-limit budget (same Upstox access token/API
+    # already used for market data). Trendlyne MCP is kept as a secondary/
+    # legacy source — see its module docstring — purely for the fields
+    # Upstox's fundamentals API doesn't expose at all (ownership/
+    # shareholding: Promoter/FII/DII holding, pledge). Priority order
+    # below means Upstox wins on any field both report; Trendlyne only
+    # fills in what Upstox has no data for.
+    # MultiSourceFundamentalProvider does real field-by-field priority
+    # merging (not "pick one provider's whole response"), so both sources
+    # contribute without either blocking the other. Falls back to the
+    # honest UnavailableFundamentalDataProvider (UNKNOWN, never a
     # fabricated value) when nothing is configured at all.
+    upstox_fundamental_provider: UpstoxFundamentalDataProvider | None = (
+        UpstoxFundamentalDataProvider(settings, AsyncSessionLocal)
+        if settings.upstox_configured
+        else None
+    )
     trendlyne_provider: TrendlyneFundamentalDataProvider | None = (
         TrendlyneFundamentalDataProvider(settings) if settings.trendlyne_mcp_configured else None
     )
-    fundamental_sources: list[FundamentalDataProvider] = (
-        [trendlyne_provider] if trendlyne_provider is not None else []
-    )
+    fundamental_sources: list[FundamentalDataProvider] = [
+        provider
+        for provider in (upstox_fundamental_provider, trendlyne_provider)
+        if provider is not None
+    ]
     fundamental_provider: FundamentalDataProvider = (
         MultiSourceFundamentalProvider(fundamental_sources)
         if fundamental_sources

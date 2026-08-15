@@ -27,6 +27,15 @@ recorded in `fundamental_fetch_log` — this is what makes the queue
 restart-safe (a fresh process re-derives "requests today" and "are we
 still cooling down" from that table, not from in-memory state) and is
 also the data source for the /health and dashboard queue-status views.
+
+Phase 9: every attempt also upserts `fundamental_snapshots` (see
+`app.repositories.fundamental_snapshot_repository`), the general-purpose
+"cached snapshot" a symbol not currently going through this candidate
+queue could still read from — `FundamentalSnapshotRepository.get_cached()`
+is a pure DB read with no provider call in it at all, so consuming it
+can never block on an external request the way a live fetch could. This
+doesn't change the existing embedded-in-`scanner_results.feature_snapshot`
+behavior below at all; it's an additional, independent write next to it.
 """
 
 import asyncio
@@ -51,6 +60,7 @@ from app.fundamentals.queue_models import FetchStatus, QueueRunResult, QueueStat
 from app.fundamentals.scorer import FundamentalScorer
 from app.models.scanner_result import ScannerResult
 from app.repositories.fundamental_fetch_log_repository import FundamentalFetchLogRepository
+from app.repositories.fundamental_snapshot_repository import FundamentalSnapshotRepository
 from app.repositories.market_repository import SymbolRepository
 
 # scanner_name values that carry a StockCandidate snapshot (fundamental
@@ -337,6 +347,13 @@ class FundamentalQueueService:
             data, status, error = None, FetchStatus.FAILED, str(exc)[:500]
 
         await log_repo.record(symbol_id=row.symbol_id, status=status, error_message=error)
+        await FundamentalSnapshotRepository(session, self._settings).upsert(
+            row.symbol_id,
+            data=data,
+            source=self._fundamental_provider.name,
+            status=status,
+            error_message=error,
+        )
         logger.info(
             "FUNDAMENTAL_FETCH symbol={symbol} status={status}", symbol=symbol, status=status.value
         )

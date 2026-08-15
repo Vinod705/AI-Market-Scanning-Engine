@@ -26,6 +26,7 @@ from app.fundamentals.scorer import FundamentalScorer
 from app.models.fundamental_fetch_log import FundamentalFetchLog
 from app.providers.base_provider import ProviderSymbol
 from app.repositories.fundamental_fetch_log_repository import FundamentalFetchLogRepository
+from app.repositories.fundamental_snapshot_repository import FundamentalSnapshotRepository
 from app.repositories.market_repository import SymbolRepository
 from app.repositories.scanner_repository import ScannerResultRepository
 
@@ -796,3 +797,81 @@ async def test_run_queue_processes_normally_with_lock_guard_in_place(
     assert result.processed == 3
     assert result.succeeded == 3
     assert provider.max_concurrent == 1
+
+
+# --- Phase 9: every fetch attempt also upserts fundamental_snapshots ----
+
+
+async def test_successful_fetch_upserts_the_general_purpose_cache_table(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    symbol_id = await _seed_candidate(session_factory, symbol_name="CACHEOK", technical_score=50.0)
+
+    queue = FundamentalQueueService(session_factory, _fast_settings(), _FakeStatusProvider())
+    await queue.run_queue()
+
+    async with session_factory() as session:
+        cached = await FundamentalSnapshotRepository(session, _fast_settings()).get_cached(
+            symbol_id
+        )
+    assert cached is not None
+    assert cached.status == FetchStatus.SUCCESS
+    assert cached.data is not None
+    assert cached.data.roe_pct == 20.0
+    assert cached.is_fresh is True
+
+
+async def test_failed_fetch_records_the_attempt_without_erasing_prior_cached_data(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    symbol_id = await _seed_candidate(session_factory, symbol_name="CACHEFAIL", technical_score=50.0)
+
+    # First run: succeeds, populates the cache.
+    good_provider = _FakeStatusProvider()
+    await FundamentalQueueService(session_factory, _fast_settings(), good_provider).run_queue()
+
+    async with session_factory() as session:
+        before = await FundamentalSnapshotRepository(session, _fast_settings()).get_cached(
+            symbol_id
+        )
+    assert before is not None and before.data is not None
+
+    # Second run: same symbol re-enters the queue (force by clearing the
+    # cached fundamental_status the first run wrote), this time failing.
+    async with session_factory() as session:
+        row = (
+            await ScannerResultRepository(session).get_for_symbol(symbol_id)
+        )[0]
+        snapshot = dict(row.feature_snapshot)
+        snapshot["fundamental_status"] = "PENDING"
+        row.feature_snapshot = snapshot
+        await session.commit()
+
+    failing_provider = _FakeStatusProvider(
+        overrides={"CACHEFAIL": _FakeFetch(status=FetchStatus.FAILED, error="boom")}
+    )
+    await FundamentalQueueService(session_factory, _fast_settings(), failing_provider).run_queue()
+
+    async with session_factory() as session:
+        after = await FundamentalSnapshotRepository(session, _fast_settings()).get_cached(
+            symbol_id
+        )
+    assert after is not None
+    assert after.status == FetchStatus.FAILED
+    assert after.error_message == "boom"
+    # Last known-good data/fetched_at must survive a failed re-check.
+    assert after.data is not None
+    assert after.data.roe_pct == before.data.roe_pct
+    assert after.fetched_at == before.fetched_at
+
+
+async def test_get_cached_never_touches_a_provider(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The non-blocking guarantee: get_cached() takes no provider
+    argument at all — a caller on the live scan path literally cannot
+    trigger an external fetch through this method."""
+    async with session_factory() as session:
+        repo = FundamentalSnapshotRepository(session, _fast_settings())
+        cached = await repo.get_cached(symbol_id=999_999)  # unknown symbol, no seed at all
+    assert cached is None
