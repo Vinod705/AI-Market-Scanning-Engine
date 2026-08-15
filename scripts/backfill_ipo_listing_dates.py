@@ -17,7 +17,8 @@ Expected CSV format (header row required):
 
     symbol        (required)  - NSE trading symbol, matched against Symbol.symbol
     isin          (preferred) - primary match key, cross-referenced against
-                                 the live 5paisa scrip master's ISIN column
+                                 our locally-recorded Upstox ISIN (from
+                                 Symbol.instrument_token)
     listing_date  (required)  - ISO YYYY-MM-DD, the real exchange listing date
     company_name, exchange, source (optional, audit-only, not used for matching)
     classification (optional) - if present, only "MAINBOARD_IPO"/"SME_IPO"
@@ -26,8 +27,14 @@ Expected CSV format (header row required):
 
 Matching: ISIN-primary, symbol-string fallback when ISIN is absent on
 either side. A row whose symbol resolves locally but whose ISIN
-contradicts our own live-fetched ISIN for that symbol (a rename/reuse
+contradicts our own recorded ISIN for that symbol (a rename/reuse
 collision) is left unmatched and reported as ambiguous, never guessed.
+The ISIN used for cross-referencing comes from `Symbol.instrument_token`
+(Upstox's own `"NSE_EQ|<ISIN>"` instrument key, already stored locally
+for every Upstox-sourced symbol — see
+`app.fundamentals.upstox_fundamental_provider`'s `_extract_isin`) rather
+than a live provider call: no network fetch needed, and no dependency on
+5paisa being configured at all.
 
 Safe to re-run: each run re-evaluates the full CSV against current data
 and only ever writes listing_date for confidently-matched rows.
@@ -44,12 +51,22 @@ from datetime import date, datetime
 
 from loguru import logger
 
-from app.config.settings import get_settings
 from app.database.session import AsyncSessionLocal
-from app.providers.fivepaisa_provider import FivePaisaProvider
+from app.models.symbol import Symbol
 from app.repositories.market_repository import SymbolRepository
 
 _VALID_CLASSIFICATIONS = {"MAINBOARD_IPO", "SME_IPO"}
+_UPSTOX_ISIN_PREFIX = "NSE_EQ|"
+
+
+def _extract_isin(instrument_token: str) -> str | None:
+    """Same extraction `UpstoxFundamentalDataProvider._extract_isin` uses
+    — Upstox's own instrument key already carries the ISIN, so this
+    script's ISIN cross-reference needs no live provider call at all."""
+    if not instrument_token.startswith(_UPSTOX_ISIN_PREFIX):
+        return None
+    isin = instrument_token[len(_UPSTOX_ISIN_PREFIX) :]
+    return isin or None
 
 
 @dataclass
@@ -121,8 +138,8 @@ def match_rows(
 ) -> tuple[dict[str, date], BackfillReport]:
     """Pure matching logic -- no DB/network I/O, fully unit-testable.
 
-    `symbol_to_isin`: our own symbols mapped to their live 5paisa ISIN
-    (only symbols with a reported ISIN are present).
+    `symbol_to_isin`: our own symbols mapped to their locally-recorded
+    Upstox ISIN (only symbols with a resolvable ISIN are present).
     `known_symbols`: every symbol we track locally (superset of the above,
     used for the symbol-string fallback).
 
@@ -192,19 +209,15 @@ async def main(csv_path: str) -> None:
     with open(csv_path, encoding="utf-8") as f:
         rows = parse_csv_rows(f.read())
 
-    settings = get_settings()
-    provider = FivePaisaProvider(settings)
-    await provider.connect()
-    try:
-        provider_symbols = await provider.get_symbols()
-    finally:
-        await provider.disconnect()
-
-    symbol_to_isin = {s.symbol: s.isin for s in provider_symbols if s.isin}
-
     async with AsyncSessionLocal() as session:
         repo = SymbolRepository(session)
-        known_symbols = {s.symbol for s in await repo.list_active()}
+        active_symbols: list[Symbol] = await repo.list_active()
+        known_symbols = {s.symbol for s in active_symbols}
+        symbol_to_isin = {
+            s.symbol: isin
+            for s in active_symbols
+            if (isin := _extract_isin(s.instrument_token)) is not None
+        }
 
         to_write, report = match_rows(
             rows, symbol_to_isin=symbol_to_isin, known_symbols=known_symbols
