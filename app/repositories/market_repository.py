@@ -59,6 +59,17 @@ class SymbolRepository:
         stmt = select(Symbol).where(Symbol.is_active.is_(True)).order_by(Symbol.symbol)
         return list((await self._session.execute(stmt)).scalars().all())
 
+    async def get_by_instrument_tokens(self, instrument_tokens: list[str]) -> dict[str, Symbol]:
+        """Bulk `instrument_token -> Symbol` lookup — added for
+        `app.catalyst.news_matcher`, which needs to confirm each
+        instrument_key an external news API returns actually resolves to
+        a real, known symbol before treating an article as matched to it."""
+        if not instrument_tokens:
+            return {}
+        stmt = select(Symbol).where(Symbol.instrument_token.in_(instrument_tokens))
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return {row.instrument_token: row for row in rows}
+
     async def upsert(self, provider_symbol: ProviderSymbol) -> Symbol:
         # Matched by symbol alone, not (symbol, exchange) — see
         # get_by_symbol's docstring for why a provider-specific exchange

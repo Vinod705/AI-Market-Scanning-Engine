@@ -337,6 +337,13 @@ class Settings(BaseSettings):
     fundamental_max_requests_per_run: int = 200
     fundamental_max_requests_per_day: int = 350
 
+    # --- News/Catalyst Engine (Phase 10) ---
+    # Freshness is always computed live from published_at at read time
+    # (see app.catalyst.catalyst_classifier.classify_freshness), never a
+    # stored flag — these are just the window boundaries, not a cache TTL.
+    catalyst_breaking_news_window_minutes: int = 30
+    catalyst_stale_news_window_hours: int = 24
+
     # --- Technical Score (0-100, reuses Phase 3 daily/session features; should sum to 1.0) ---
     technical_weight_trend: float = 0.25
     technical_weight_momentum: float = 0.20
