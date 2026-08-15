@@ -281,7 +281,8 @@ async def _score_news(
     )
     score = _clamp(50 + weighted_sentiment * 50)
     reasons = [
-        f"News: {item.event_type.value} ({item.sentiment.value}) — {item.headline}"
+        f"News: {item.event_type.value} ({item.sentiment.value}) — {item.headline} "
+        f"[{item.source}, {item.published_at.strftime('%Y-%m-%d %H:%M UTC')}]"
         for item in active[:3]
     ]
     return ComponentScore(

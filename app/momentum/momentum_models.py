@@ -48,6 +48,12 @@ ALLOWED_TRANSITIONS: frozenset[tuple[MomentumState, MomentumState]] = frozenset(
 
 ALERT_WORTHY_STATES = frozenset({MomentumState.TRIGGERED, MomentumState.CONFIRMED})
 
+# Single source of truth for the scanner_name written by
+# `app.momentum.momentum_engine.MomentumStateEngine._raise_alert` and read
+# by `app.alerts.formatter` to route to the momentum-specific message
+# shape — avoids the two modules drifting apart on a hardcoded string.
+MOMENTUM_SCANNER_NAME = "momentum_state_v1"
+
 
 def is_valid_transition(from_state: MomentumState, to_state: MomentumState) -> bool:
     return (from_state, to_state) in ALLOWED_TRANSITIONS

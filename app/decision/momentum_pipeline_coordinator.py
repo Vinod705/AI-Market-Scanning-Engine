@@ -162,16 +162,30 @@ class MomentumPipelineCoordinator:
                 timestamp=moment,
             )
 
+        # Full per-component breakdown (status/score/weight/reasons for
+        # each of SignalFusionEngine's 7 inputs), not just the rolled-up
+        # positive/negative factor lists — this is what lets
+        # app.alerts.formatter answer "why did this stock trigger?"
+        # section-by-section (TECHNICAL/VOLUME/OI/SECTOR/MARKET/
+        # FUNDAMENTALS/NEWS) using only deterministic, already-computed
+        # values. Persisted as-is via StateTransition.evidence -> the
+        # alert's feature_snapshot, no separate query needed later.
         evidence: dict[str, object] = {
             "overall_score": fusion.overall_score,
             "confidence": fusion.confidence,
             "positive_factors": fusion.positive_factors,
             "negative_factors": fusion.negative_factors,
             "missing_data": fusion.missing_data,
+            "component_scores": {
+                name: {
+                    "status": component.status.value,
+                    "score": component.score,
+                    "weight": component.weight,
+                    "reasons": component.reasons,
+                }
+                for name, component in fusion.component_scores.items()
+            },
         }
-        technical_component = fusion.component_scores.get("technical")
-        if technical_component is not None and technical_component.score is not None:
-            evidence["technical_score"] = technical_component.score
 
         momentum_result = await self._momentum_engine.evaluate(
             symbol, fusion.overall_score, evidence, now=moment

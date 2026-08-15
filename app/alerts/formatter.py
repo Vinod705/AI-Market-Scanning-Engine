@@ -16,6 +16,7 @@ from datetime import datetime
 from app.compounding.engine import evaluate_compounding
 from app.config.settings import Settings, get_settings
 from app.decision.validator import DecisionValidator
+from app.momentum.momentum_models import MOMENTUM_SCANNER_NAME
 
 _WHY_BULLETS = {
     "resistance_proximity": "Price approaching resistance",
@@ -61,6 +62,8 @@ class AlertMessageContext:
 class AlertMessageFormatter:
     @staticmethod
     def format_text(context: AlertMessageContext, settings: Settings | None = None) -> str:
+        if context.scanner_name == MOMENTUM_SCANNER_NAME:
+            return _format_momentum_text(context)
         if context.scanner_name in _BREAKOUT_STYLE_SCANNERS:
             return _format_breakout_text(context)
         return _format_candidate_text(context, settings or get_settings())
@@ -194,6 +197,125 @@ def _format_candidate_text(context: AlertMessageContext, settings: Settings) -> 
 
     lines += ["Time:", context.timestamp.strftime("%H:%M IST"), ""]
     lines += ["⚠️ Scanner signal — not an automatic trade. Score is not a probability."]
+
+    return "\n".join(lines)
+
+
+# (section header, WHY-NOW display name, `component_scores` key) — order
+# matches the requested TECHNICAL/VOLUME/OI/SECTOR/MARKET/FUNDAMENTALS/NEWS
+# structure. "Sector" here is `SignalFusionEngine`'s stock-level RRG
+# reading, not a true sector aggregate — see that module's own docstring:
+# this project has no verified stock-to-sector-name mapping, so no sector
+# label is fabricated here.
+_MOMENTUM_SECTIONS: list[tuple[str, str, str]] = [
+    ("TECHNICAL", "Technical", "technical"),
+    ("VOLUME", "Volume", "volume"),
+    ("OI", "OI", "oi"),
+    ("SECTOR", "Sector", "sector_rrg"),
+    ("MARKET", "Market", "market_regime"),
+    ("FUNDAMENTALS", "Fundamentals", "fundamentals"),
+    ("NEWS", "News", "news"),
+]
+
+# Stripped when rendering a component's own section (the header already
+# names the component) or a RISKS bullet. Deliberately excludes the
+# Fundamentals prefix — its "(fresh)"/"(stale cache, last known value)"
+# freshness marker is exactly the "latest cached snapshot" context this
+# alert shape needs to keep visible, not redundant noise to strip.
+_MOMENTUM_REASON_PREFIXES = [
+    "Technical: ",
+    "Volume: ",
+    "OI: ",
+    "Sector/RRG: ",
+    "Market regime: ",
+    "News: ",
+]
+
+
+def _strip_known_reason_prefix(reason: str) -> str:
+    for prefix in _MOMENTUM_REASON_PREFIXES:
+        if reason.startswith(prefix):
+            return reason[len(prefix) :]
+    return reason
+
+
+def _format_momentum_text(context: AlertMessageContext) -> str:
+    """Renders the momentum-state alert shape (Phase 14) — answers "why
+    did this stock trigger?" section by section. Every value comes
+    straight from `app.signals.signal_fusion_engine.SignalFusionEngine`'s
+    own per-component breakdown, persisted verbatim onto the alert's
+    `feature_snapshot["evidence"]["component_scores"]` by
+    `app.decision.momentum_pipeline_coordinator` — nothing here computes
+    or invents a market number, and a section simply doesn't render when
+    its component was MISSING or had no reasons attached."""
+    snapshot = context.feature_snapshot
+    momentum_state = str(snapshot.get("momentum_state") or "").upper()
+    from_state = snapshot.get("from_state")
+
+    evidence_raw = snapshot.get("evidence")
+    evidence = evidence_raw if isinstance(evidence_raw, dict) else {}
+    component_scores_raw = evidence.get("component_scores")
+    component_scores = component_scores_raw if isinstance(component_scores_raw, dict) else {}
+
+    header = "MOMENTUM CONFIRMED" if momentum_state == "CONFIRMED" else "MOMENTUM TRIGGER"
+    lines = [f"\U0001f6a8 {header}", "", context.symbol, f"Score: {context.score:.0f}/100", ""]
+
+    state_line = f"State: {momentum_state}" if momentum_state else "State: UNKNOWN"
+    if from_state:
+        state_line += f" (from {from_state})"
+    lines += [state_line, ""]
+
+    # "WHY NOW" is a deterministic sentence, not an LLM summary: it lists
+    # exactly the components that (a) had real data and (b) scored >= 50,
+    # i.e. actually pulled the composite score up — same AVAILABLE/NEUTRAL
+    # vs MISSING and >=50-is-positive conventions `SignalFusionResult`
+    # already uses to bucket `positive_factors`.
+    contributing: list[str] = []
+    for label, why_now_name, key in _MOMENTUM_SECTIONS:
+        component = component_scores.get(key)
+        if not isinstance(component, dict) or component.get("status") == "MISSING":
+            continue
+        reasons_raw = component.get("reasons")
+        reasons = [str(r) for r in reasons_raw] if isinstance(reasons_raw, list) else []
+        if not reasons:
+            continue
+
+        score = component.get("score")
+        lines += [label]
+        if isinstance(score, int | float):
+            lines += [f"- Score: {score:.0f}/100"]
+        lines += [f"- {_strip_known_reason_prefix(r)}" for r in reasons]
+        lines += [""]
+
+        if isinstance(score, int | float) and score >= 50:
+            contributing.append(why_now_name)
+
+    if contributing:
+        lines += ["WHY NOW", " + ".join(contributing) + " alignment.", ""]
+
+    # RISKS reuses `SignalFusionResult.negative_factors` as-is — every
+    # component's own below-50 reasons across all 7 inputs — rather than
+    # inventing separate resistance-proximity/VWAP-distance calculations;
+    # a below-50 "Price vs session VWAP unfavorable" or "Market regime:
+    # RISK_OFF" already IS the deterministic risk signal this section
+    # needs. Omitted entirely when nothing qualifies ("if applicable").
+    negative_factors_raw = evidence.get("negative_factors")
+    negative_factors = (
+        [str(r) for r in negative_factors_raw] if isinstance(negative_factors_raw, list) else []
+    )
+    if negative_factors:
+        lines += ["RISKS"]
+        lines += [f"- {_strip_known_reason_prefix(r)}" for r in negative_factors]
+        lines += [""]
+
+    confidence = evidence.get("confidence")
+    if isinstance(confidence, int | float):
+        lines += [f"Confidence: {confidence:.0f}% of configured weight backed by real data", ""]
+
+    lines += ["Time:", context.timestamp.strftime("%H:%M IST"), ""]
+    lines += [
+        "⚠️ Momentum state signal — not an automatic trade. Score is not a probability."
+    ]
 
     return "\n".join(lines)
 

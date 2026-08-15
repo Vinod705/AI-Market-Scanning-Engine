@@ -31,11 +31,13 @@ from app.config.settings import Settings
 from app.core.time import utc_now
 from app.decision.models import Decision, DecisionResult, Quality
 from app.momentum import state_machine
-from app.momentum.momentum_models import ALERT_WORTHY_STATES, StateTransition
+from app.momentum.momentum_models import (
+    ALERT_WORTHY_STATES,
+    MOMENTUM_SCANNER_NAME,
+    StateTransition,
+)
 from app.repositories.market_repository import SymbolRepository
 from app.repositories.momentum_state_repository import MomentumStateRepository
-
-_SCANNER_NAME = "momentum_state_v1"
 
 
 @dataclass
@@ -111,7 +113,7 @@ class MomentumStateEngine:
         )
         decision = DecisionResult(
             symbol=symbol,
-            scanner_name=_SCANNER_NAME,
+            scanner_name=MOMENTUM_SCANNER_NAME,
             signal_type=transition.to_state.value,
             decision=Decision.ALERT,
             score=transition.score,

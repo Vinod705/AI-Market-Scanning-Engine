@@ -169,6 +169,168 @@ def test_candidate_format_shows_scanner_sources() -> None:
     assert "Scanner Sources: 5PAISA" in text
 
 
+def _momentum_context(**overrides: object) -> AlertMessageContext:
+    defaults: dict[str, object] = dict(
+        symbol="ABC",
+        scanner_name="momentum_state_v1",
+        score=87.0,
+        quality="HIGH",
+        breakout_level=None,
+        feature_snapshot={
+            "momentum_state": "TRIGGERED",
+            "from_state": "ACTIVATING",
+            "reason": "score 87.00 reached the trigger band",
+            "date": "2026-01-05",
+            "evidence": {
+                "overall_score": 87.0,
+                "confidence": 70.0,
+                "positive_factors": ["Technical: RSI(14) favorable"],
+                "negative_factors": ["Market regime: RISK_OFF"],
+                "missing_data": ["news"],
+                "component_scores": {
+                    "technical": {
+                        "status": "AVAILABLE",
+                        "score": 82.0,
+                        "weight": 25.0,
+                        "reasons": [
+                            "Technical: Trend direction favorable",
+                            "Technical: Price vs session VWAP favorable",
+                        ],
+                    },
+                    "volume": {
+                        "status": "AVAILABLE",
+                        "score": 100.0,
+                        "weight": 15.0,
+                        "reasons": ["Volume: relative_volume=3.10x average"],
+                    },
+                    "oi": {
+                        "status": "AVAILABLE",
+                        "score": 75.0,
+                        "weight": 15.0,
+                        "reasons": ["OI: futures LONG_BUILDUP"],
+                    },
+                    "sector_rrg": {
+                        "status": "AVAILABLE",
+                        "score": 86.0,
+                        "weight": 15.0,
+                        "reasons": ["Sector/RRG: LEADING vs NIFTY50"],
+                    },
+                    "market_regime": {
+                        "status": "AVAILABLE",
+                        "score": 30.0,
+                        "weight": 10.0,
+                        "reasons": ["Market regime: RISK_OFF"],
+                    },
+                    "fundamentals": {
+                        "status": "MISSING",
+                        "score": None,
+                        "weight": 10.0,
+                        "reasons": ["no cached fundamental snapshot yet"],
+                    },
+                    "news": {
+                        "status": "MISSING",
+                        "score": None,
+                        "weight": 10.0,
+                        "reasons": ["no NewsProvider supplied (live-call opt-in)"],
+                    },
+                },
+            },
+        },
+        passed_rules=["score 87.00 reached the trigger band"],
+        timestamp=datetime(2026, 1, 5, 10, 42),
+    )
+    defaults.update(overrides)
+    return AlertMessageContext(**defaults)  # type: ignore[arg-type]
+
+
+def test_momentum_format_shows_header_symbol_and_score() -> None:
+    text = AlertMessageFormatter.format_text(_momentum_context())
+    assert "MOMENTUM TRIGGER" in text
+    assert "ABC" in text
+    assert "Score: 87/100" in text
+    assert "State: TRIGGERED (from ACTIVATING)" in text
+
+
+def test_momentum_format_confirmed_state_uses_confirmed_header() -> None:
+    context = _momentum_context(
+        feature_snapshot={
+            **_momentum_context().feature_snapshot,
+            "momentum_state": "CONFIRMED",
+            "from_state": "TRIGGERED",
+        }
+    )
+    text = AlertMessageFormatter.format_text(context)
+    assert "MOMENTUM CONFIRMED" in text
+    assert "MOMENTUM TRIGGER" not in text
+
+
+def test_momentum_format_renders_available_sections_with_stripped_reasons() -> None:
+    text = AlertMessageFormatter.format_text(_momentum_context())
+    assert "TECHNICAL" in text
+    assert "- Trend direction favorable" in text
+    assert "VOLUME" in text
+    assert "- relative_volume=3.10x average" in text
+    assert "OI" in text
+    assert "- futures LONG_BUILDUP" in text
+    assert "SECTOR" in text
+    assert "- LEADING vs NIFTY50" in text
+    assert "MARKET" in text
+
+
+def test_momentum_format_omits_missing_components_entirely() -> None:
+    text = AlertMessageFormatter.format_text(_momentum_context())
+    assert "FUNDAMENTALS" not in text
+    assert "NEWS" not in text
+
+
+def test_momentum_format_why_now_lists_only_contributing_components() -> None:
+    text = AlertMessageFormatter.format_text(_momentum_context())
+    assert "WHY NOW" in text
+    why_now_line = text.splitlines()[text.splitlines().index("WHY NOW") + 1]
+    assert "Technical" in why_now_line
+    assert "Volume" in why_now_line
+    assert "OI" in why_now_line
+    assert "Sector" in why_now_line
+    # market_regime scored 30 (< 50) so it must not be counted as contributing
+    assert "Market" not in why_now_line
+
+
+def test_momentum_format_shows_risks_from_negative_factors() -> None:
+    text = AlertMessageFormatter.format_text(_momentum_context())
+    assert "RISKS" in text
+    assert "- RISK_OFF" in text
+
+
+def test_momentum_format_omits_risks_section_when_no_negative_factors() -> None:
+    context = _momentum_context(
+        feature_snapshot={
+            **_momentum_context().feature_snapshot,
+            "evidence": {
+                **_momentum_context().feature_snapshot["evidence"],  # type: ignore[index]
+                "negative_factors": [],
+            },
+        }
+    )
+    text = AlertMessageFormatter.format_text(context)
+    assert "RISKS" not in text
+
+
+def test_momentum_format_shows_confidence_and_disclaimer() -> None:
+    text = AlertMessageFormatter.format_text(_momentum_context())
+    assert "Confidence: 70%" in text
+    assert "not an automatic trade" in text
+    assert "not a probability" in text.lower()
+
+
+def test_momentum_format_first_observation_has_no_from_state() -> None:
+    context = _momentum_context(
+        feature_snapshot={**_momentum_context().feature_snapshot, "from_state": None}
+    )
+    text = AlertMessageFormatter.format_text(context)
+    assert "State: TRIGGERED" in text
+    assert "(from" not in text
+
+
 def test_candidate_format_shows_both_scanner_sources_when_confirmed() -> None:
     context = _candidate_context(
         feature_snapshot={
