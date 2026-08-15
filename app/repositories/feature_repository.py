@@ -159,3 +159,24 @@ class SessionFeatureRepository:
             .limit(1)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_bulk(self, symbol_ids: list[int]) -> dict[int, SessionFeature]:
+        """Bulk equivalent of `get_latest` — see
+        `DailyFeatureRepository.get_latest_bulk`'s docstring for why."""
+        if not symbol_ids:
+            return {}
+        row_number = (
+            func.row_number()
+            .over(partition_by=SessionFeature.symbol_id, order_by=SessionFeature.date.desc())
+            .label("rn")
+        )
+        ranked = (
+            select(SessionFeature.id, row_number)
+            .where(SessionFeature.symbol_id.in_(symbol_ids))
+            .subquery()
+        )
+        stmt = select(SessionFeature).join(ranked, SessionFeature.id == ranked.c.id).where(
+            ranked.c.rn == 1
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return {row.symbol_id: row for row in rows}

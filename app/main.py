@@ -51,6 +51,7 @@ from app.providers.upstox_websocket import UpstoxMarketFeed
 from app.scanner.breakout_scanner import BreakoutScanner
 from app.scanner.engine import ScannerEngine
 from app.scanner.momentum_scanner import MomentumScanner
+from app.scanner.orb_scanner import OrbScanner
 from app.scanner.scanner_registry import ScannerRegistry
 from app.scanner.vcp_scanner import VcpScanner
 from app.scheduler.alert_jobs import register_alert_jobs
@@ -175,6 +176,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scanner_registry.register(BreakoutScanner(settings))
     scanner_registry.register(VcpScanner(settings))
     scanner_registry.register(MomentumScanner(settings))
+    scanner_registry.register(OrbScanner(settings))
     scanner_registry.register(FnoMomentumScanner(settings, source_providers))
     scanner_registry.register(PreBreakoutScanner(settings, source_providers))
     scanner_registry.register(IpoIntradayScanner(settings, source_providers))
