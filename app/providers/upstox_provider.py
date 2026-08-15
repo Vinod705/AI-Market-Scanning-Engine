@@ -30,23 +30,35 @@ guessed. What's implemented, and why the rest isn't:
   guess.
 - **Quotes / historical candles**: `GET /market-quote/quotes` and
   `GET /historical-candle/:instrument_key/:interval/:to_date/:from_date`.
+- **Open interest / derivatives** (`DerivativesProvider`, see
+  `app.derivatives`): `GET /option/chain` (per-strike OI/`prev_oi`, verified
+  live) and `GET /historical-candle/...` against an `NSE_FO` contract's own
+  `instrument_key` (OI at bar index 6, verified live) — see
+  `get_option_chain`/`get_futures_oi_history` below. Options/futures
+  contract-level records (`strike_price`, `expiry`, `instrument_type`,
+  `instrument_key`) come from the same instruments master
+  `get_fno_symbol_roots()` already reads, just not previously parsed past
+  `underlying_symbol`.
 - **Deliberately NOT implemented** (confirmed real and available, out of
-  scope for this phase): option chain (`GET /option/chain`, includes OI/
-  greeks — deferred, no OI/derivatives work yet), and the Company
-  Fundamentals API (`GET /fundamentals/{ISIN}/...` — belongs to the
-  separate `app.fundamentals.*` subsystem with its own
-  `FundamentalDataProvider` interface, not this one). The WebSocket market
-  feed v3 is implemented separately in `app.providers.upstox_websocket`.
-  Historical candles also carry an open-interest value per bar (7th array
-  element) that is intentionally never read into `Candle`, which has no OI
-  field.
+  scope so far): real-time/intraday OI (the WebSocket v3 feed in
+  `app.providers.upstox_websocket` deliberately subscribes `ltpc` mode
+  only, which has no OI field by design — `full`/`option_greeks` modes
+  exist and do carry it per the fetched `.proto` schema, but switching
+  modes would change the live equity tick path this session already
+  verified extensively; not touched here), and the Company Fundamentals
+  API (`GET /fundamentals/{ISIN}/...` — belongs to the separate
+  `app.fundamentals.*` subsystem with its own `FundamentalDataProvider`
+  interface, not this one). Historical candles used for *equities*
+  (`get_daily`/`get_intraday`) still never read the OI array element —
+  equities have no OI concept; only `get_futures_oi_history` reads it, and
+  only for genuine F&O contract `instrument_key`s.
 """
 
 import asyncio
 import gzip
 import json
 import time
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -56,7 +68,11 @@ from app.config.settings import Settings
 from app.core.time import to_market_time, utc_now
 from app.providers.base_provider import (
     Candle,
+    DerivativesProvider,
+    FuturesOiBar,
     MarketDataProvider,
+    OptionChainSnapshot,
+    OptionLegSnapshot,
     ProviderError,
     ProviderSymbol,
     Quote,
@@ -66,8 +82,16 @@ _SYMBOL_SEGMENT = "NSE_EQ"
 _DERIVATIVES_SEGMENT = "NSE_FO"
 
 
-class UpstoxProvider(MarketDataProvider):
-    """MarketDataProvider backed by the Upstox v2 REST API."""
+class UpstoxProvider(MarketDataProvider, DerivativesProvider):
+    """MarketDataProvider backed by the Upstox v2 REST API. Also implements
+    `DerivativesProvider` — verified live this session: the same
+    instruments master's `NSE_FO` segment carries real per-contract
+    `strike_price`/`expiry`/`instrument_type`/`instrument_key` fields (not
+    just the `underlying_symbol` root `get_fno_symbol_roots()` already
+    used), `GET /option/chain` returns real `oi`/`prev_oi` per strike/leg,
+    and `GET /historical-candle/...` returns real open interest at index 6
+    of each bar for a futures contract's own `instrument_key` — see
+    `app.derivatives` for what's built on top of this."""
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings
@@ -78,6 +102,15 @@ class UpstoxProvider(MarketDataProvider):
         self._connected = False
         self._symbol_cache: dict[str, ProviderSymbol] = {}
         self._last_call_at: float = 0.0
+        # Same instruments-master file `get_symbols()` caches for equities
+        # (`_symbol_cache`) also carries every NSE_FO record — cached here
+        # too so a run touching many underlyings (`OiEngine` over the full
+        # F&O universe) downloads+decompresses it once, not once per
+        # symbol per call (`get_option_chain` + `get_futures_oi_history`
+        # each need it). Cleared only by constructing a new provider —
+        # matches `_symbol_cache`'s existing per-instance lifetime, fine
+        # for a run-scoped engine like `OiEngine`.
+        self._fno_records_cache: list[dict[str, Any]] | None = None
 
     # --- lifecycle -----------------------------------------------------
 
@@ -230,6 +263,90 @@ class UpstoxProvider(MarketDataProvider):
             lookback=timedelta(days=self._settings.upstox_daily_history_days),
         )
 
+    # --- DerivativesProvider ---------------------------------------------
+
+    async def get_option_chain(
+        self, underlying_symbol: str, underlying_instrument_key: str
+    ) -> list[OptionChainSnapshot]:
+        expiry = await self._nearest_fno_expiry(underlying_symbol)
+        if expiry is None:
+            return []
+
+        data = await self._request_list(
+            "GET",
+            "/option/chain",
+            params={"instrument_key": underlying_instrument_key, "expiry_date": expiry.isoformat()},
+        )
+
+        snapshots: list[OptionChainSnapshot] = []
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            try:
+                snapshots.append(
+                    OptionChainSnapshot(
+                        underlying_symbol=underlying_symbol,
+                        underlying_instrument_key=underlying_instrument_key,
+                        expiry_date=expiry,
+                        strike_price=row["strike_price"],
+                        underlying_spot_price=row["underlying_spot_price"],
+                        call=self._parse_option_leg(row.get("call_options")),
+                        put=self._parse_option_leg(row.get("put_options")),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                logger.warning(
+                    "Skipping malformed option-chain row for {symbol}: {row}",
+                    symbol=underlying_symbol,
+                    row=row,
+                )
+        return snapshots
+
+    async def get_futures_oi_history(
+        self, underlying_symbol: str, lookback_days: int = 5
+    ) -> list[FuturesOiBar]:
+        contract = await self._nearest_fno_contract(underlying_symbol, instrument_type="FUT")
+        if contract is None:
+            return []
+        instrument_key = str(contract["instrument_key"])
+        expiry = self._expiry_date(contract["expiry"])
+
+        to_date = to_market_time(utc_now(), self._settings.market_timezone)
+        from_date = to_date - timedelta(days=lookback_days)
+        path = (
+            f"/historical-candle/{instrument_key}/day/"
+            f"{to_date.strftime('%Y-%m-%d')}/{from_date.strftime('%Y-%m-%d')}"
+        )
+        data = await self._request("GET", path)
+        raw_candles = data.get("candles") if isinstance(data, dict) else None
+        if not raw_candles or not isinstance(raw_candles, list):
+            return []
+
+        bars: list[FuturesOiBar] = []
+        for row in raw_candles:
+            try:
+                # [timestamp, open, high, low, close, volume, open_interest]
+                # — same array shape `_get_candles` reads, but here OI
+                # (index 6) is the whole point, not skipped.
+                bars.append(
+                    FuturesOiBar(
+                        instrument_key=instrument_key,
+                        expiry_date=expiry,
+                        timestamp=row[0],
+                        close=row[4],
+                        volume=int(row[5]),
+                        open_interest=int(row[6]),
+                    )
+                )
+            except (IndexError, TypeError, ValueError):
+                logger.warning(
+                    "Skipping malformed futures OI bar for {symbol}: {row}",
+                    symbol=underlying_symbol,
+                    row=row,
+                )
+        bars.sort(key=lambda bar: bar.timestamp)
+        return bars
+
     # --- internals -----------------------------------------------------
 
     async def _resolve_symbol(self, symbol: str) -> ProviderSymbol:
@@ -279,6 +396,100 @@ class UpstoxProvider(MarketDataProvider):
                     "Skipping malformed candle for {symbol}: {row}", symbol=symbol, row=row
                 )
         return candles
+
+    async def _all_fno_records(self) -> list[dict[str, Any]]:
+        """Every `NSE_FO` record across the whole instruments master,
+        downloaded+parsed once per provider instance and cached — a run
+        touching many underlyings (`OiEngine` over the full F&O universe)
+        must not re-download the same multi-MB file per symbol per call."""
+        if self._fno_records_cache is not None:
+            return self._fno_records_cache
+        raw = await self._download_instruments()
+        try:
+            records = json.loads(raw)
+        except ValueError as exc:
+            raise ProviderError(f"Upstox instruments master is not valid JSON: {exc}") from exc
+        if not isinstance(records, list):
+            raise ProviderError("Upstox instruments master returned no data")
+        self._fno_records_cache = [
+            record
+            for record in records
+            if isinstance(record, dict) and record.get("segment") == _DERIVATIVES_SEGMENT
+        ]
+        return self._fno_records_cache
+
+    async def _fno_records(self, underlying_symbol: str) -> list[dict[str, Any]]:
+        """Every `NSE_FO` instrument record for one underlying, from the
+        same instruments master `get_symbols()`/`get_fno_symbol_roots()`
+        use — no separate/invented data source."""
+        return [
+            record
+            for record in await self._all_fno_records()
+            if record.get("underlying_symbol") == underlying_symbol
+        ]
+
+    async def _nearest_fno_contract(
+        self, underlying_symbol: str, *, instrument_type: str
+    ) -> dict[str, Any] | None:
+        """The not-yet-expired contract of `instrument_type` (e.g. "FUT")
+        with the soonest expiry for `underlying_symbol`, or `None` if the
+        underlying has none — never guessed, never the furthest/first
+        record encountered."""
+        now_ms = int(utc_now().timestamp() * 1000)
+        candidates = [
+            record
+            for record in await self._fno_records(underlying_symbol)
+            if record.get("instrument_type") == instrument_type
+            and isinstance(record.get("expiry"), int | float)
+            and int(record["expiry"]) >= now_ms
+            and "instrument_key" in record
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda record: record["expiry"])
+
+    async def _nearest_fno_expiry(self, underlying_symbol: str) -> date | None:
+        """Soonest not-yet-expired expiry date across every contract type
+        (futures/calls/puts) for `underlying_symbol` — all contract types
+        for one underlying share the same expiry cycle, so any one of them
+        answers "what's the nearest expiry" for the option-chain call."""
+        now_ms = int(utc_now().timestamp() * 1000)
+        expiries = {
+            int(record["expiry"])
+            for record in await self._fno_records(underlying_symbol)
+            if isinstance(record.get("expiry"), int | float) and int(record["expiry"]) >= now_ms
+        }
+        if not expiries:
+            return None
+        return self._expiry_date(min(expiries))
+
+    @staticmethod
+    def _expiry_date(expiry_ms: int) -> date:
+        """Upstox reports `expiry` as epoch milliseconds (UTC) — see the
+        real `NSE_FO` records verified live this session."""
+        return datetime.fromtimestamp(expiry_ms / 1000, tz=UTC).date()
+
+    @staticmethod
+    def _parse_option_leg(raw: Any) -> OptionLegSnapshot | None:
+        if not isinstance(raw, dict):
+            return None
+        market_data = raw.get("market_data")
+        if not isinstance(market_data, dict):
+            return None
+        instrument_key = raw.get("instrument_key")
+        if not instrument_key:
+            return None
+        try:
+            return OptionLegSnapshot(
+                instrument_key=str(instrument_key),
+                ltp=market_data["ltp"],
+                close_price=market_data["close_price"],
+                volume=int(market_data.get("volume", 0)),
+                oi=market_data["oi"],
+                prev_oi=market_data["prev_oi"],
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
 
     async def _download_instruments(self) -> bytes:
         """Downloads and gunzips the public instruments master. Not routed
@@ -358,6 +569,110 @@ class UpstoxProvider(MarketDataProvider):
                 await asyncio.sleep(self._settings.upstox_retry_backoff_seconds * attempt)
 
         raise ProviderError(f"Upstox call {method} {path} failed after retries: {last_error}")
+
+    async def _request_list(
+        self, method: str, path: str, *, params: dict[str, Any] | None = None
+    ) -> list[Any]:
+        """Same retry/rate-limit/error contract as `_request`, for the one
+        endpoint (`/option/chain`) whose `data` is a JSON array rather than
+        an object — `_request`/`_handle_response` intentionally coerce
+        non-dict `data` to `{}`, so that pair can't be reused unchanged
+        here without breaking their existing dict contract for every other
+        caller (quotes, candles)."""
+        last_error: str | None = None
+
+        for attempt in range(1, self._settings.upstox_max_retries + 1):
+            await self._respect_rate_limit()
+
+            try:
+                response = await self._client.request(
+                    method,
+                    f"{self._settings.upstox_base_url}{path}",
+                    params=params,
+                    headers=self._headers(),
+                    timeout=self._settings.upstox_request_timeout,
+                )
+            except httpx.TimeoutException:
+                last_error = "request timed out"
+                logger.warning(
+                    "Upstox call {method} {path} timed out (attempt {attempt}/{max})",
+                    method=method,
+                    path=path,
+                    attempt=attempt,
+                    max=self._settings.upstox_max_retries,
+                )
+            except httpx.HTTPError as exc:
+                last_error = str(exc)
+                logger.warning(
+                    "Upstox call {method} {path} failed (attempt {attempt}/{max}): {error}",
+                    method=method,
+                    path=path,
+                    attempt=attempt,
+                    max=self._settings.upstox_max_retries,
+                    error=exc,
+                )
+            else:
+                result = self._handle_response_list(
+                    response, method=method, path=path, attempt=attempt
+                )
+                if result is not None:
+                    return result
+                last_error = f"HTTP {response.status_code}"
+
+            if attempt < self._settings.upstox_max_retries:
+                await asyncio.sleep(self._settings.upstox_retry_backoff_seconds * attempt)
+
+        raise ProviderError(f"Upstox call {method} {path} failed after retries: {last_error}")
+
+    def _handle_response_list(
+        self, response: httpx.Response, *, method: str, path: str, attempt: int
+    ) -> list[Any] | None:
+        """List-returning counterpart to `_handle_response` — same
+        status-code contract (429/5xx retry, 401/other 4xx permanent
+        failure), only the success-shape check differs (`data` must be a
+        list, not a dict)."""
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+
+        if response.status_code == 200 and body.get("status") == "success":
+            data = body.get("data")
+            return data if isinstance(data, list) else []
+
+        if response.status_code == 429:
+            logger.warning(
+                "Upstox rate limited on {method} {path} (attempt {attempt}/{max})",
+                method=method,
+                path=path,
+                attempt=attempt,
+                max=self._settings.upstox_max_retries,
+            )
+            return None
+
+        if 500 <= response.status_code < 600:
+            logger.warning(
+                "Upstox server error on {method} {path} (attempt {attempt}/{max}): {status}",
+                method=method,
+                path=path,
+                attempt=attempt,
+                max=self._settings.upstox_max_retries,
+                status=response.status_code,
+            )
+            return None
+
+        if response.status_code == 401:
+            self._connected = False
+            raise ProviderError(
+                f"Upstox auth failed: {self._error_message(body) or 'access token rejected'}",
+                retryable=False,
+            )
+
+        raise ProviderError(
+            f"Upstox API error on {method} {path}: "
+            f"{self._error_message(body) or f'HTTP {response.status_code}'}",
+            retryable=False,
+        )
 
     def _handle_response(
         self, response: httpx.Response, *, method: str, path: str, attempt: int

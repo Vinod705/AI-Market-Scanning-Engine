@@ -11,6 +11,7 @@ from app.models.fundamental_fetch_log import FundamentalFetchLog
 from app.models.intraday_price import IntradayPrice
 from app.models.market_data_feed_log import MarketDataFeedLog
 from app.models.market_status import MarketStatus
+from app.models.oi_observation import OiObservation
 from app.models.scanner_log import ScannerLog
 from app.models.scanner_result import ScannerResult
 from app.models.scanner_run import ScannerRun
@@ -30,6 +31,7 @@ __all__ = [
     "IntradayPrice",
     "MarketDataFeedLog",
     "MarketStatus",
+    "OiObservation",
     "ScannerLog",
     "ScannerResult",
     "ScannerRun",

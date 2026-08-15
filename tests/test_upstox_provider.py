@@ -9,6 +9,7 @@ import contextlib
 import gzip
 import json
 import time
+from datetime import UTC, datetime
 
 import httpx
 
@@ -384,3 +385,139 @@ async def test_rate_limiter_spaces_out_calls() -> None:
     elapsed = time.monotonic() - start
 
     assert elapsed >= 0.09  # allow small scheduling jitter below the 100ms floor
+
+
+# --- DerivativesProvider (get_option_chain / get_futures_oi_history) -------
+#
+# Far-future expiry (2030) so these tests never go stale from `_nearest_fno_expiry`
+# filtering out an expired contract as real time passes.
+_FAR_FUTURE_EXPIRY_MS = int(datetime(2030, 1, 1, tzinfo=UTC).timestamp() * 1000)
+
+_FNO_INSTRUMENTS = [
+    *_SAMPLE_INSTRUMENTS,
+    {
+        "segment": "NSE_FO",
+        "name": "TCS FUT",
+        "exchange": "NSE",
+        "instrument_type": "FUT",
+        "instrument_key": "NSE_FO|68797",
+        "trading_symbol": "TCS FUT",
+        "underlying_symbol": "TCS",
+        "underlying_key": "NSE_EQ|INE467B01029",
+        "expiry": _FAR_FUTURE_EXPIRY_MS,
+    },
+    {
+        "segment": "NSE_FO",
+        "name": "TCS 2400 CE",
+        "exchange": "NSE",
+        "instrument_type": "CE",
+        "instrument_key": "NSE_FO|149196",
+        "trading_symbol": "TCS 2400 CE",
+        "underlying_symbol": "TCS",
+        "underlying_key": "NSE_EQ|INE467B01029",
+        "strike_price": 2400.0,
+        "expiry": _FAR_FUTURE_EXPIRY_MS,
+    },
+]
+
+
+async def test_get_option_chain_returns_readings_for_nearest_expiry() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "instruments" in str(request.url):
+            return _instruments_response(_FNO_INSTRUMENTS)
+        assert request.url.params.get("instrument_key") == "NSE_EQ|INE467B01029"
+        assert request.url.params.get("expiry_date") == datetime.fromtimestamp(
+            _FAR_FUTURE_EXPIRY_MS / 1000, tz=UTC
+        ).date().isoformat()
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": [
+                    {
+                        "expiry": "2030-01-01",
+                        "pcr": 1.0,
+                        "strike_price": 2400.0,
+                        "underlying_key": "NSE_EQ|INE467B01029",
+                        "underlying_spot_price": 2380.0,
+                        "call_options": {
+                            "instrument_key": "NSE_FO|149196",
+                            "market_data": {
+                                "ltp": 50.0,
+                                "volume": 1000,
+                                "oi": 1100.0,
+                                "close_price": 40.0,
+                                "prev_oi": 1000.0,
+                            },
+                        },
+                        "put_options": {
+                            "instrument_key": "NSE_FO|149197",
+                            "market_data": {
+                                "ltp": 30.0,
+                                "volume": 800,
+                                "oi": 900.0,
+                                "close_price": 35.0,
+                                "prev_oi": 950.0,
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+
+    provider = _provider(handler)
+    snapshots = await provider.get_option_chain("TCS", "NSE_EQ|INE467B01029")
+
+    assert len(snapshots) == 1
+    row = snapshots[0]
+    assert row.strike_price == 2400
+    assert row.call is not None and row.call.oi == 1100
+    assert row.put is not None and row.put.prev_oi == 950
+
+
+async def test_get_option_chain_returns_empty_when_no_fno_contracts() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _instruments_response(_SAMPLE_INSTRUMENTS)  # no expiry-bearing records at all
+
+    provider = _provider(handler)
+    snapshots = await provider.get_option_chain("INFY", "NSE_EQ|INE009A01021")
+
+    assert snapshots == []
+
+
+async def test_get_futures_oi_history_extracts_open_interest() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "instruments" in str(request.url):
+            return _instruments_response(_FNO_INSTRUMENTS)
+        assert "NSE_FO%7C68797" in str(request.url) or "NSE_FO|68797" in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "candles": [
+                        ["2026-08-14T00:00:00+05:30", 2399.8, 2401.8, 2348.0, 2379.9, 220275, 1926900],
+                        ["2026-08-13T00:00:00+05:30", 2379.3, 2390.0, 2346.7, 2382.7, 304650, 1887300],
+                    ]
+                },
+            },
+        )
+
+    provider = _provider(handler)
+    bars = await provider.get_futures_oi_history("TCS")
+
+    assert len(bars) == 2
+    # sorted oldest-first
+    assert bars[0].timestamp < bars[1].timestamp
+    assert bars[1].open_interest == 1926900
+    assert float(bars[1].close) == 2379.9
+
+
+async def test_get_futures_oi_history_returns_empty_when_no_futures_contract() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _instruments_response(_SAMPLE_INSTRUMENTS)  # no expiry-bearing FUT record
+
+    provider = _provider(handler)
+    bars = await provider.get_futures_oi_history("INFY")
+
+    assert bars == []
