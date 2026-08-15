@@ -22,22 +22,25 @@ class MomentumStateRepository:
 
     async def apply_transition(
         self, symbol_id: int, transition: StateTransition
-    ) -> MomentumStateRecord:
+    ) -> tuple[MomentumStateRecord, int]:
         """Updates the current-state pointer and appends one transition-log
         row, both in the caller's existing session/transaction — the two
         writes are never split across separate commits, so the log and
-        the current pointer can never disagree about the last move."""
-        self._session.add(
-            MomentumStateTransition(
-                symbol_id=symbol_id,
-                from_state=transition.from_state.value if transition.from_state else None,
-                to_state=transition.to_state.value,
-                timestamp=transition.timestamp,
-                reason=transition.reason,
-                score=transition.score,
-                evidence=transition.evidence,
-            )
+        the current pointer can never disagree about the last move.
+        Returns the transition-log row's own id alongside the current-state
+        record — Phase 16's operational-validation observations anchor on
+        this id so a live trigger's tracked evidence/score always traces
+        back to the exact append-only log row that produced it."""
+        transition_row = MomentumStateTransition(
+            symbol_id=symbol_id,
+            from_state=transition.from_state.value if transition.from_state else None,
+            to_state=transition.to_state.value,
+            timestamp=transition.timestamp,
+            reason=transition.reason,
+            score=transition.score,
+            evidence=transition.evidence,
         )
+        self._session.add(transition_row)
 
         record = await self.get_current(symbol_id)
         if record is None:
@@ -51,7 +54,7 @@ class MomentumStateRepository:
         record.entered_at = transition.timestamp
 
         await self._session.flush()
-        return record
+        return record, transition_row.id
 
     @staticmethod
     def state_of(record: MomentumStateRecord | None) -> MomentumState | None:

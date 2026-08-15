@@ -19,10 +19,19 @@ from app.fundamentals.models import FundamentalData
 from app.fundamentals.queue_models import FetchStatus
 from app.momentum.momentum_models import MomentumState, StateTransition
 from app.providers.base_provider import ProviderSymbol
+from app.repositories.alert_repository import AlertDeliveryLogRepository, AlertRepository
 from app.repositories.feature_repository import DailyFeatureRepository
 from app.repositories.fundamental_snapshot_repository import FundamentalSnapshotRepository
 from app.repositories.market_regime_snapshot_repository import MarketRegimeSnapshotRepository
-from app.repositories.market_repository import SymbolRepository
+from app.repositories.market_repository import (
+    CollectorLogRepository,
+    MarketDataFeedLogRepository,
+    SymbolRepository,
+)
+from app.repositories.momentum_alert_observation_repository import (
+    MomentumAlertObservationRepository,
+    NewObservation,
+)
 from app.repositories.momentum_state_repository import MomentumStateRepository
 from app.repositories.oi_repository import OiObservationRepository
 from app.repositories.sector_rrg_snapshot_repository import SectorRrgSnapshotRepository
@@ -235,3 +244,149 @@ async def test_get_fundamentals_coverage_reports_counts(
     assert result.total_symbols_tracked == 1
     assert result.with_data_count == 1
     assert result.fresh_count == 1
+
+
+async def test_get_live_triggers_resolves_symbol_names_and_price_fields(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    symbol_id = await _seed_symbol(session_factory, "LIVETRIG")
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        _record, transition_id = await MomentumStateRepository(session).apply_transition(
+            symbol_id,
+            StateTransition(
+                symbol="LIVETRIG",
+                from_state=None,
+                to_state=MomentumState.TRIGGERED,
+                timestamp=now,
+                reason="score cleared trigger band",
+                score=87.0,
+            ),
+        )
+        await MomentumAlertObservationRepository(session).insert(
+            NewObservation(
+                transition_id=transition_id,
+                symbol_id=symbol_id,
+                alert_id=None,
+                momentum_state="TRIGGERED",
+                trigger_at=now,
+                signal_score=Decimal("87.00"),
+                signal_confidence=Decimal("70.00"),
+                as_of_data_at=now,
+                data_age_seconds=5.0,
+                is_stale=False,
+                price_at_trigger=Decimal("100.50"),
+            )
+        )
+        await session.commit()
+
+        result = await AnalyticsService(session, Settings()).get_live_triggers(20)
+
+    assert len(result) == 1
+    assert result[0].symbol == "LIVETRIG"
+    assert result[0].momentum_state == "TRIGGERED"
+    assert result[0].signal_score == Decimal("87.00")
+    assert result[0].price_at_trigger == Decimal("100.50")
+    assert result[0].alert_id is None
+    assert result[0].delivery_status is None
+    assert result[0].delivery_latency_seconds is None
+
+
+async def test_get_live_triggers_computes_delivery_latency_from_real_alert_and_delivery_log(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    symbol_id = await _seed_symbol(session_factory, "LATENCYSYM")
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        alert = await AlertRepository(session).create(
+            symbol_id=symbol_id,
+            scanner_name="momentum_state_v1",
+            signal_type="TRIGGERED",
+            decision="ALERT",
+            score=Decimal("87.00"),
+            quality="HIGH",
+            entry_reference=None,
+            breakout_level=None,
+            support_level=None,
+            resistance_level=None,
+            feature_snapshot={},
+            reason="test",
+            passed_rules=[],
+            fingerprint="test-fingerprint-latency",
+            signal_date=date(2026, 1, 5),
+            expires_at=None,
+        )
+        await AlertDeliveryLogRepository(session).log_attempt(
+            alert_id=alert.id, provider="telegram", status="SENT", attempt_number=1
+        )
+        await session.commit()
+
+        _record, transition_id = await MomentumStateRepository(session).apply_transition(
+            symbol_id,
+            StateTransition(
+                symbol="LATENCYSYM",
+                from_state=None,
+                to_state=MomentumState.TRIGGERED,
+                timestamp=now,
+                reason="score cleared trigger band",
+                score=87.0,
+            ),
+        )
+        await MomentumAlertObservationRepository(session).insert(
+            NewObservation(
+                transition_id=transition_id,
+                symbol_id=symbol_id,
+                alert_id=alert.id,
+                momentum_state="TRIGGERED",
+                trigger_at=now,
+                signal_score=Decimal("87.00"),
+                signal_confidence=Decimal("70.00"),
+                as_of_data_at=now,
+                data_age_seconds=5.0,
+                is_stale=False,
+                price_at_trigger=Decimal("100.50"),
+            )
+        )
+        await session.commit()
+
+        result = await AnalyticsService(session, Settings()).get_live_triggers(20)
+
+    assert result[0].alert_id == alert.id
+    assert result[0].delivery_status == "SENT"
+    assert result[0].delivery_latency_seconds is not None
+    assert result[0].delivery_latency_seconds >= 0
+
+
+async def test_get_provider_health_reports_collector_and_feed_logs(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        collector_log = await CollectorLogRepository(session).start(datetime(2026, 1, 5, 9, 0, tzinfo=UTC))
+        await CollectorLogRepository(session).finish(
+            collector_log,
+            finish_time=datetime(2026, 1, 5, 9, 1, tzinfo=UTC),
+            symbols_processed=100,
+            success_count=98,
+            failed_count=2,
+            error_message="two symbols timed out",
+        )
+        feed_log = await MarketDataFeedLogRepository(session).open(datetime(2026, 1, 5, 9, 0, tzinfo=UTC))
+        await MarketDataFeedLogRepository(session).close(
+            feed_log,
+            disconnected_at=datetime(2026, 1, 5, 9, 30, tzinfo=UTC),
+            messages_received=500,
+            ticks_processed=480,
+            duplicates_dropped=20,
+            candles_flushed=32,
+            disconnect_reason="connection reset",
+        )
+        await session.commit()
+
+        result = await AnalyticsService(session, Settings()).get_provider_health(20)
+
+    assert len(result.recent_collector_runs) == 1
+    assert result.recent_collector_runs[0].failed_count == 2
+    assert result.recent_collector_runs[0].error_message == "two symbols timed out"
+    assert len(result.recent_feed_connections) == 1
+    assert result.recent_feed_connections[0].disconnect_reason == "connection reset"
+    assert result.recent_feed_connections[0].duplicates_dropped == 20

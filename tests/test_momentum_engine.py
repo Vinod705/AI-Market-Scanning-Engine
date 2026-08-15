@@ -43,6 +43,7 @@ async def test_unknown_symbol_produces_no_transition_and_no_alert(
     result = await engine.evaluate("NOSUCHSYMBOL", 95.0, {})
     assert result.transition is None
     assert result.alert_id is None
+    assert result.transition_id is None
 
 
 async def test_first_evaluation_creates_state_and_transition_log_no_alert(
@@ -56,6 +57,7 @@ async def test_first_evaluation_creates_state_and_transition_log_no_alert(
     assert result.transition is not None
     assert result.transition.to_state == MomentumState.SETUP
     assert result.alert_id is None  # SETUP is not alert-worthy
+    assert isinstance(result.transition_id, int)  # real append-only log row id
 
     async with session_factory() as session:
         record = await MomentumStateRepository(session).get_current(symbol_id)

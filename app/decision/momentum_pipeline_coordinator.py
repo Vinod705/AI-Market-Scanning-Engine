@@ -34,10 +34,21 @@ parameter to supply one, so a caller cannot accidentally wire a live
 network call into this path. Fundamentals only ever come from
 `FundamentalSnapshotRepository`'s cache (see `SignalFusionEngine`'s own
 docstring) — never a live provider call either.
+
+**Phase 16 (live paper/simulation mode)**: `app.scheduler.momentum_pipeline_jobs`
+is the only caller that runs this continuously against live Upstox data
+— never automated trading, never a backtest; `_record_observation` below
+just writes one factual `momentum_alert_observations` row per alert-worthy
+transition (trigger time, score, evidence, and how stale the underlying
+price already was), for `app.scheduler.momentum_observation_followup_jobs`
+to later fill in with real subsequent prices. This coordinator still
+never places an order and never will — there is no order-execution code
+anywhere in this project.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
+from decimal import Decimal
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -49,8 +60,12 @@ from app.core.time import utc_now
 from app.decision.momentum_decision_engine import MomentumDecisionEngine
 from app.decision.momentum_decision_models import PipelineDecisionResult, PipelineVerdict
 from app.momentum.momentum_engine import MomentumStateEngine
-from app.momentum.momentum_models import MomentumState
-from app.repositories.market_repository import SymbolRepository
+from app.momentum.momentum_models import ALERT_WORTHY_STATES, MomentumState
+from app.repositories.market_repository import PriceRepository, SymbolRepository
+from app.repositories.momentum_alert_observation_repository import (
+    MomentumAlertObservationRepository,
+    NewObservation,
+)
 from app.repositories.momentum_state_repository import MomentumStateRepository
 from app.repositories.scanner_repository import ScannerResultRepository
 from app.signals.signal_fusion_engine import SignalFusionEngine
@@ -194,6 +209,16 @@ class MomentumPipelineCoordinator:
         momentum_state: MomentumState | None
         if momentum_result.transition is not None:
             momentum_state = momentum_result.transition.to_state
+            if momentum_state in ALERT_WORTHY_STATES and momentum_result.transition_id is not None:
+                await self._record_observation(
+                    symbol=symbol,
+                    transition_id=momentum_result.transition_id,
+                    alert_id=momentum_result.alert_id,
+                    momentum_state=momentum_state,
+                    score=fusion.overall_score,
+                    confidence=fusion.confidence,
+                    moment=moment,
+                )
         else:
             # No new transition this cycle (e.g. still holding at CONFIRMED
             # or WATCH) — the verdict must still reflect the symbol's real
@@ -221,3 +246,65 @@ class MomentumPipelineCoordinator:
             alert_id=momentum_result.alert_id,
             timestamp=moment,
         )
+
+    async def _record_observation(
+        self,
+        *,
+        symbol: str,
+        transition_id: int,
+        alert_id: int | None,
+        momentum_state: MomentumState,
+        score: float | None,
+        confidence: float,
+        moment: datetime,
+    ) -> None:
+        """Phase 16 operational validation: one row per alert-worthy
+        transition, capturing exactly what the trigger looked like right
+        now — the real price backing it and how stale that price already
+        was — so a later, separate follow-up job can record what price
+        actually did afterward. Never blocks or fails the pipeline itself:
+        a symbol row missing here just means no observation is recorded,
+        not a pipeline error (the alert/transition already happened and
+        is unaffected)."""
+        if score is None:
+            return
+        async with self._session_factory() as session:
+            symbol_row = await SymbolRepository(session).get_by_symbol(symbol)
+            if symbol_row is None:
+                return
+
+            latest_intraday = await PriceRepository(session).get_latest_intraday(symbol_row.id)
+            as_of_data_at = latest_intraday.datetime if latest_intraday is not None else None
+            # SQLite (this project's test backend) doesn't enforce
+            # tz-aware storage for DateTime(timezone=True) — a value
+            # written tz-aware can come back naive. Same fix as
+            # FundamentalFetchLogRepository.most_recent_rate_limit.
+            if as_of_data_at is not None and as_of_data_at.tzinfo is None:
+                as_of_data_at = as_of_data_at.replace(tzinfo=UTC)
+            data_age_seconds = (
+                (moment - as_of_data_at).total_seconds() if as_of_data_at is not None else None
+            )
+            is_stale = (
+                data_age_seconds is not None
+                and data_age_seconds > self._settings.momentum_observation_stale_data_threshold_seconds
+            )
+            price_at_trigger = (
+                Decimal(str(latest_intraday.close)) if latest_intraday is not None else None
+            )
+
+            await MomentumAlertObservationRepository(session).insert(
+                NewObservation(
+                    transition_id=transition_id,
+                    symbol_id=symbol_row.id,
+                    alert_id=alert_id,
+                    momentum_state=momentum_state.value,
+                    trigger_at=moment,
+                    signal_score=Decimal(str(round(score, 2))),
+                    signal_confidence=Decimal(str(round(confidence, 2))),
+                    as_of_data_at=as_of_data_at,
+                    data_age_seconds=data_age_seconds,
+                    is_stale=is_stale,
+                    price_at_trigger=price_at_trigger,
+                )
+            )
+            await session.commit()

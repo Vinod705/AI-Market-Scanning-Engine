@@ -47,6 +47,49 @@ async def _apply(
         await session.commit()
 
 
+async def test_apply_transition_returns_the_transition_log_rows_own_id(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Phase 16 anchors operational-validation observations on this id —
+    it must be a real, distinct row id for the append-only log entry
+    `apply_transition` just wrote, not the current-state record's id."""
+    symbol_id = await _seed_symbol(session_factory, "ANCHORCHECK")
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        record, transition_id = await MomentumStateRepository(session).apply_transition(
+            symbol_id,
+            StateTransition(
+                symbol="ANCHORCHECK",
+                from_state=None,
+                to_state=MomentumState.SETUP,
+                timestamp=now,
+                reason="test",
+                score=15.0,
+            ),
+        )
+        await session.commit()
+
+    assert isinstance(transition_id, int)
+    assert transition_id > 0
+
+    async with session_factory() as session:
+        _record2, second_transition_id = await MomentumStateRepository(session).apply_transition(
+            symbol_id,
+            StateTransition(
+                symbol="ANCHORCHECK",
+                from_state=MomentumState.SETUP,
+                to_state=MomentumState.WATCH,
+                timestamp=now,
+                reason="test",
+                score=45.0,
+            ),
+        )
+        await session.commit()
+
+    assert second_transition_id != transition_id
+
+
 async def test_list_by_states_filters_and_orders_by_score_desc(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

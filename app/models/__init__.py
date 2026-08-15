@@ -13,6 +13,7 @@ from app.models.intraday_price import IntradayPrice
 from app.models.market_data_feed_log import MarketDataFeedLog
 from app.models.market_regime_snapshot import MarketRegimeSnapshot
 from app.models.market_status import MarketStatus
+from app.models.momentum_alert_observation import MomentumAlertObservation
 from app.models.momentum_state import MomentumStateRecord
 from app.models.momentum_state_transition import MomentumStateTransition
 from app.models.oi_observation import OiObservation
@@ -38,6 +39,7 @@ __all__ = [
     "MarketDataFeedLog",
     "MarketRegimeSnapshot",
     "MarketStatus",
+    "MomentumAlertObservation",
     "MomentumStateRecord",
     "MomentumStateTransition",
     "OiObservation",

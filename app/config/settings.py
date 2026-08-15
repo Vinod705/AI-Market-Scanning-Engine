@@ -404,6 +404,21 @@ class Settings(BaseSettings):
     def regime_sector_symbol_list(self) -> list[str]:
         return [s.strip() for s in self.regime_sector_symbols.split(",") if s.strip()]
 
+    # --- Live paper/simulation mode (Phase 16) ---
+    # How often the live momentum pipeline (Upstox -> SignalFusion ->
+    # momentum state -> DecisionEngine -> Telegram) re-evaluates every
+    # qualified candidate. A judgment call, not a validated cadence:
+    # short enough to catch an intraday move promptly, long enough not to
+    # hammer the DB with a full-universe SignalFusion pass every few
+    # seconds — see app.scheduler.momentum_pipeline_jobs.
+    momentum_pipeline_interval_seconds: int = 60
+    # How stale the most recent intraday price feeding a trigger is
+    # allowed to be before app.decision.momentum_pipeline_coordinator
+    # flags that specific trigger's evidence as stale in its operational
+    # observation record — a judgment call about what "live" means for
+    # this data source, not a claim about Upstox's own guarantees.
+    momentum_observation_stale_data_threshold_seconds: float = 300.0
+
     # --- Technical Score (0-100, reuses Phase 3 daily/session features; should sum to 1.0) ---
     technical_weight_trend: float = 0.25
     technical_weight_momentum: float = 0.20

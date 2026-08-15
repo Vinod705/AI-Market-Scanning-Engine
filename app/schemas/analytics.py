@@ -79,3 +79,54 @@ class FundamentalsCoverageOut(BaseModel):
     with_data_count: int
     fresh_count: int
     last_fetched_at: datetime | None
+
+
+class LiveTriggerOut(BaseModel):
+    """Phase 16 operational-validation record for one alert-worthy
+    momentum-state transition — see
+    `app.models.momentum_alert_observation.MomentumAlertObservation`'s
+    docstring for why every `price_after_*`/`*_pct` field is a plain
+    factual observation, never a simulated trade or a verdict."""
+
+    symbol: str
+    momentum_state: str
+    trigger_at: datetime
+    signal_score: Decimal
+    signal_confidence: Decimal | None
+    data_age_seconds: float | None
+    is_stale: bool
+    price_at_trigger: Decimal | None
+    price_after_15m: Decimal | None
+    price_after_1h: Decimal | None
+    price_after_1d: Decimal | None
+    price_change_pct_15m: Decimal | None
+    price_change_pct_1h: Decimal | None
+    price_change_pct_1d: Decimal | None
+    alert_id: int | None
+    delivery_status: str | None
+    delivery_latency_seconds: float | None
+
+
+class CollectorRunOut(BaseModel):
+    start_time: datetime
+    finish_time: datetime | None
+    duration: float | None
+    symbols_processed: int
+    success_count: int
+    failed_count: int
+    error_message: str | None
+
+
+class MarketFeedConnectionOut(BaseModel):
+    connected_at: datetime
+    disconnected_at: datetime | None
+    messages_received: int
+    ticks_processed: int
+    duplicates_dropped: int
+    candles_flushed: int
+    disconnect_reason: str | None
+
+
+class ProviderHealthOut(BaseModel):
+    recent_collector_runs: list[CollectorRunOut]
+    recent_feed_connections: list[MarketFeedConnectionOut]

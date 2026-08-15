@@ -44,6 +44,7 @@ from app.repositories.momentum_state_repository import MomentumStateRepository
 class MomentumEvaluationResult:
     transition: StateTransition | None
     alert_id: int | None
+    transition_id: int | None = None
 
 
 class MomentumStateEngine:
@@ -92,7 +93,7 @@ class MomentumStateEngine:
                 score=score,
                 evidence=evidence,
             )
-            await repo.apply_transition(symbol_row.id, transition)
+            _record, transition_id = await repo.apply_transition(symbol_row.id, transition)
             await session.commit()
             symbol_id = symbol_row.id
 
@@ -100,7 +101,9 @@ class MomentumStateEngine:
         if next_state in ALERT_WORTHY_STATES:
             alert_id = await self._raise_alert(symbol, symbol_id, transition)
 
-        return MomentumEvaluationResult(transition=transition, alert_id=alert_id)
+        return MomentumEvaluationResult(
+            transition=transition, alert_id=alert_id, transition_id=transition_id
+        )
 
     async def _raise_alert(
         self, symbol: str, symbol_id: int, transition: StateTransition

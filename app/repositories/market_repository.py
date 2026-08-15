@@ -258,6 +258,35 @@ class PriceRepository:
             return None
         return high, low
 
+    async def get_intraday_at_or_after(
+        self, symbol_id: int, moment: datetime
+    ) -> IntradayPrice | None:
+        """The earliest intraday bar at or after `moment` — used by
+        Phase 16's observation follow-up job to record the real price a
+        fixed horizon (15m/1h) after a live trigger, once that much real
+        time has actually passed. `None` if no bar exists yet at/after
+        that instant (never estimated)."""
+        stmt = (
+            select(IntradayPrice)
+            .where(IntradayPrice.symbol_id == symbol_id, IntradayPrice.datetime >= moment)
+            .order_by(IntradayPrice.datetime.asc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_daily_at_or_after(self, symbol_id: int, day: date_) -> DailyPrice | None:
+        """The earliest daily bar at or after `day` — used by Phase 16's
+        observation follow-up job for the "1 trading day later" horizon
+        (the next real close on/after that calendar date, never an
+        interpolated one)."""
+        stmt = (
+            select(DailyPrice)
+            .where(DailyPrice.symbol_id == symbol_id, DailyPrice.date >= day)
+            .order_by(DailyPrice.date.asc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def get_intraday_for_date(self, symbol_id: int, day: date_) -> list[IntradayPrice]:
         """All intraday bars for `symbol_id` on `day`, oldest first."""
         stmt = (
@@ -342,6 +371,10 @@ class CollectorLogRepository:
         log.error_message = error_message
         await self._session.flush()
 
+    async def list_recent(self, limit: int = 20) -> list[CollectorLog]:
+        stmt = select(CollectorLog).order_by(CollectorLog.start_time.desc()).limit(limit)
+        return list((await self._session.execute(stmt)).scalars().all())
+
 
 class MarketDataFeedLogRepository:
     """Persistence for `market_data_feed_logs` — one row per WebSocket
@@ -374,3 +407,7 @@ class MarketDataFeedLogRepository:
         log.candles_flushed = candles_flushed
         log.disconnect_reason = disconnect_reason
         await self._session.flush()
+
+    async def list_recent(self, limit: int = 20) -> list[MarketDataFeedLog]:
+        stmt = select(MarketDataFeedLog).order_by(MarketDataFeedLog.connected_at.desc()).limit(limit)
+        return list((await self._session.execute(stmt)).scalars().all())

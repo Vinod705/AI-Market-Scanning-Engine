@@ -61,6 +61,10 @@ from app.scheduler.analytics_snapshot_jobs import register_analytics_snapshot_jo
 from app.scheduler.digest_jobs import register_digest_jobs
 from app.scheduler.fundamental_queue_jobs import register_fundamental_queue_jobs
 from app.scheduler.jobs import register_market_data_jobs
+from app.scheduler.momentum_observation_followup_jobs import (
+    register_momentum_observation_followup_jobs,
+)
+from app.scheduler.momentum_pipeline_jobs import register_momentum_pipeline_jobs
 from app.scheduler.service import get_scheduler_service
 from app.scheduler.universe_jobs import register_universe_jobs
 
@@ -294,6 +298,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         telegram_provider,
     )
     register_analytics_snapshot_jobs(scheduler_service, AsyncSessionLocal, settings)
+    register_momentum_pipeline_jobs(
+        scheduler_service, AsyncSessionLocal, settings, alert_manager, market_updater.is_market_open
+    )
+    register_momentum_observation_followup_jobs(scheduler_service, AsyncSessionLocal, settings)
     scheduler_service.start()
 
     # Restart recovery: reload PENDING/RETRYING alerts from PostgreSQL and

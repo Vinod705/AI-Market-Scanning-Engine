@@ -21,10 +21,12 @@ from app.config.settings import get_settings
 from app.database.session import get_db_session
 from app.schemas.analytics import (
     FundamentalsCoverageOut,
+    LiveTriggerOut,
     MarketRegimeOut,
     MomentumCandidateOut,
     MomentumTransitionOut,
     OiBuildupOut,
+    ProviderHealthOut,
     SectorRrgOut,
     VolumeLeaderOut,
 )
@@ -76,3 +78,24 @@ async def oi_buildup(
 @router.get("/fundamentals-coverage", response_model=FundamentalsCoverageOut)
 async def fundamentals_coverage(session: DbSession) -> FundamentalsCoverageOut:
     return await AnalyticsService(session, get_settings()).get_fundamentals_coverage()
+
+
+@router.get("/live-triggers", response_model=list[LiveTriggerOut])
+async def live_triggers(
+    session: DbSession, limit: Annotated[int, Query(ge=1, le=100)] = 30
+) -> list[LiveTriggerOut]:
+    """Phase 16 operational validation — recent live triggers from
+    `app.scheduler.momentum_pipeline_jobs`, with real observed subsequent
+    price behavior and delivery latency. Read-only, same as every other
+    route here."""
+    return await AnalyticsService(session, get_settings()).get_live_triggers(limit)
+
+
+@router.get("/provider-health", response_model=ProviderHealthOut)
+async def provider_health(
+    session: DbSession, limit: Annotated[int, Query(ge=1, le=50)] = 20
+) -> ProviderHealthOut:
+    """Phase 16 operational validation — recent REST collector runs and
+    Upstox WebSocket connect/reconnect cycles, straight from
+    `collector_logs`/`market_data_feed_logs`."""
+    return await AnalyticsService(session, get_settings()).get_provider_health(limit)

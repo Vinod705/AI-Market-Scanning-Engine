@@ -2,7 +2,7 @@
 — the full Scanner -> Candidate -> SignalFusion -> Momentum state ->
 DecisionEngine -> AlertManager path, against an in-memory DB."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -10,10 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.alerts.manager import AlertManager
 from app.alerts.queue import AlertQueue
 from app.config.settings import Settings
+from app.core.time import utc_now
 from app.decision.momentum_pipeline_coordinator import MomentumPipelineCoordinator
 from app.providers.base_provider import Candle, ProviderSymbol
 from app.repositories.feature_repository import DailyFeatureRepository
 from app.repositories.market_repository import PriceRepository, SymbolRepository
+from app.repositories.momentum_alert_observation_repository import (
+    MomentumAlertObservationRepository,
+)
 from app.repositories.momentum_state_repository import MomentumStateRepository
 from app.repositories.scanner_repository import ScannerResultRepository
 
@@ -152,6 +156,109 @@ async def test_low_confidence_rejects_before_touching_momentum_state(
     async with session_factory() as session:
         record = await MomentumStateRepository(session).get_current(symbol_id)
         assert record is None  # never evaluated, since we rejected before momentum evaluation
+
+
+async def test_trigger_writes_a_phase16_operational_observation_row(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A live TRIGGER must leave a real, factual
+    momentum_alert_observations row behind — trigger time, score, and
+    the real intraday price/freshness backing it — for
+    app.scheduler.momentum_observation_followup_jobs to later fill in
+    with real subsequent prices. Never a simulated trade, never a
+    verdict about whether the trigger was "good"."""
+    symbol_id = await _seed_qualifying_candidate(session_factory)
+    now = utc_now()
+    async with session_factory() as session:
+        await PriceRepository(session).upsert_intraday_many(
+            symbol_id,
+            [
+                Candle(
+                    timestamp=now - timedelta(minutes=2),
+                    open=102,
+                    high=104,
+                    low=101,
+                    close=103.5,
+                    volume=50_000,
+                )
+            ],
+        )
+        await session.commit()
+
+    coordinator = _coordinator(session_factory, _settings())
+    result = await coordinator.run_all(now=now)
+    assert result.trigger_count == 1
+
+    async with session_factory() as session:
+        rows = await MomentumAlertObservationRepository(session).list_recent(limit=10)
+
+    assert len(rows) == 1
+    obs = rows[0]
+    assert obs.symbol_id == symbol_id
+    assert obs.momentum_state == "TRIGGERED"
+    assert obs.alert_id is not None
+    assert obs.price_at_trigger == Decimal("103.5")
+    assert obs.data_age_seconds is not None
+    assert 100 < obs.data_age_seconds < 140  # ~2 minutes, allowing for tz round-trip slack
+    assert obs.is_stale is False
+    # Nothing here simulates a trade or outcome — only the trigger's own
+    # inputs are recorded; subsequent-price fields stay unset until a
+    # separate follow-up job records real, later prices.
+    assert obs.price_after_15m is None
+    assert obs.price_after_1h is None
+    assert obs.price_after_1d is None
+
+
+async def test_no_observation_written_when_data_stale_beyond_threshold(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    symbol_id = await _seed_qualifying_candidate(session_factory)
+    now = utc_now()
+    async with session_factory() as session:
+        await PriceRepository(session).upsert_intraday_many(
+            symbol_id,
+            [
+                Candle(
+                    timestamp=now - timedelta(minutes=30),
+                    open=102,
+                    high=104,
+                    low=101,
+                    close=103.5,
+                    volume=50_000,
+                )
+            ],
+        )
+        await session.commit()
+
+    settings = _settings(momentum_observation_stale_data_threshold_seconds=300.0)
+    coordinator = _coordinator(session_factory, settings)
+    result = await coordinator.run_all(now=now)
+    assert result.trigger_count == 1
+
+    async with session_factory() as session:
+        rows = await MomentumAlertObservationRepository(session).list_recent(limit=10)
+
+    assert len(rows) == 1
+    assert rows[0].is_stale is True
+
+
+async def test_progression_to_confirmed_writes_a_second_distinct_observation(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """TRIGGERED and the later CONFIRMED transition are genuinely
+    separate events — each gets its own observation row, anchored to its
+    own distinct transition_id."""
+    await _seed_qualifying_candidate(session_factory)
+    coordinator = _coordinator(session_factory, _settings())
+
+    await coordinator.run_all()  # TRIGGERED
+    await coordinator.run_all()  # CONFIRMED (same stable score)
+
+    async with session_factory() as session:
+        rows = await MomentumAlertObservationRepository(session).list_recent(limit=10)
+
+    assert {r.momentum_state for r in rows} == {"TRIGGERED", "CONFIRMED"}
+    assert len({r.transition_id for r in rows}) == 2
 
 
 async def test_no_news_provider_is_ever_constructible_on_the_coordinator() -> None:

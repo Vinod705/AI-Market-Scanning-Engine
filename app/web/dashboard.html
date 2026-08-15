@@ -287,6 +287,43 @@
           </table>
         </div>
       </div>
+
+      <div class="card">
+        <h3>Live Trigger Validation</h3>
+        <div class="muted" style="margin-bottom:10px;">Operational validation only — every price here is a real, later-observed bar, never a simulated trade or a "was this correct" verdict. See <span class="num">app.decision.momentum_pipeline_coordinator</span> / <span class="num">momentum_observation_followup_jobs</span>.</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr>
+              <th>Symbol</th><th>State</th><th class="num-cell">Score</th><th class="num-cell">Confid.</th>
+              <th>Data Age</th><th class="num-cell">Price@Trigger</th>
+              <th class="num-cell">+15m</th><th class="num-cell">+1h</th><th class="num-cell">+1d</th>
+              <th>Delivery</th><th class="num-cell">Latency</th><th>Trigger Time</th>
+            </tr></thead>
+            <tbody id="live-triggers-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="section-grid">
+        <div class="card">
+          <h3>Provider Health — REST Collector Runs</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Started</th><th class="num-cell">Processed</th><th class="num-cell">Success</th><th class="num-cell">Failed</th><th>Error</th></tr></thead>
+              <tbody id="collector-runs-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Provider Health — Upstox WS Feed</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Connected</th><th>Disconnected</th><th class="num-cell">Ticks</th><th class="num-cell">Dupes</th><th>Reason</th></tr></thead>
+              <tbody id="feed-connections-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section id="tab-candidates" class="hidden">
@@ -388,7 +425,7 @@ function pill(status) {
     CONFIRMED: "pill-good", NOT_CONFIRMED: "pill-warn",
     MINIMUM_OPPORTUNITY: "pill-warn", GOOD: "pill-mid", STRONG: "pill-good", VERY_STRONG: "pill-good", EXCEPTIONAL: "pill-good",
     HIGH: "pill-good", MEDIUM: "pill-mid", LOW: "pill-neutral",
-    ALERT: "pill-good", REJECT: "pill-bad",
+    ALERT: "pill-good", REJECT: "pill-bad", STALE: "pill-warn",
     TRIGGERED: "pill-good", CONFIRMED: "pill-good", ACTIVATING: "pill-mid", SETUP: "pill-neutral",
     EXHAUSTED: "pill-neutral", INVALIDATED: "pill-bad",
     LEADING: "pill-good", STRENGTHENING: "pill-mid", WEAKENING: "pill-warn", LAGGING: "pill-bad",
@@ -738,6 +775,75 @@ async function loadTriggerHistory() {
   }
 }
 
+// ---------------- Phase 16: live paper/simulation mode ----------------
+// Operational validation only — every value here is read from
+// GET /analytics/live-triggers and /analytics/provider-health, both
+// pure reads over already-computed rows (see app.services.analytics_service).
+// Nothing here simulates a trade, computes a P&L, or renders a
+// success/failure verdict — that judgment is left to the reader.
+
+function pctCell(price, pct) {
+  if (price === null || price === undefined) return '<span class="muted">—</span>';
+  const pctText = pct === null || pct === undefined ? "" : ` (${Number(pct) >= 0 ? "+" : ""}${Number(pct).toFixed(2)}%)`;
+  const color = pct === null || pct === undefined ? "" : (Number(pct) >= 0 ? "color:var(--good);" : "color:var(--bad);");
+  return `<span class="num">₹${Number(price).toFixed(2)}</span><span class="num" style="${color}">${pctText}</span>`;
+}
+
+async function loadLiveTriggers() {
+  const body = $("#live-triggers-body");
+  try {
+    const rows = await api("/analytics/live-triggers?limit=30");
+    body.innerHTML = rows.map((r) => {
+      const ageText = r.data_age_seconds === null ? "—" : `${Math.round(r.data_age_seconds)}s`;
+      const age = r.is_stale ? `${pill("STALE")} ${ageText}` : ageText;
+      const delivery = r.delivery_status ? pill(r.delivery_status === "SENT" ? "PASS" : r.delivery_status === "FAILED" ? "FAIL" : r.delivery_status) : '<span class="muted">—</span>';
+      const latency = r.delivery_latency_seconds === null || r.delivery_latency_seconds === undefined ? "—" : `${r.delivery_latency_seconds.toFixed(1)}s`;
+      return `<tr>
+        <td class="symbol-cell">${r.symbol}</td>
+        <td>${pill(r.momentum_state)}</td>
+        <td class="num-cell num">${Number(r.signal_score).toFixed(1)}</td>
+        <td class="num-cell num">${r.signal_confidence === null ? "—" : Number(r.signal_confidence).toFixed(0) + "%"}</td>
+        <td>${age}</td>
+        <td class="num-cell">${r.price_at_trigger === null ? '<span class="muted">—</span>' : "₹" + Number(r.price_at_trigger).toFixed(2)}</td>
+        <td class="num-cell">${pctCell(r.price_after_15m, r.price_change_pct_15m)}</td>
+        <td class="num-cell">${pctCell(r.price_after_1h, r.price_change_pct_1h)}</td>
+        <td class="num-cell">${pctCell(r.price_after_1d, r.price_change_pct_1d)}</td>
+        <td>${delivery}</td>
+        <td class="num-cell num">${latency}</td>
+        <td class="muted">${fmtDate(r.trigger_at)}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="12" class="muted">No live triggers recorded yet — the momentum pipeline job runs during market hours only.</td></tr>`;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="12" class="error">${e.message}</td></tr>`;
+  }
+}
+
+async function loadProviderHealth() {
+  const collectorBody = $("#collector-runs-body");
+  const feedBody = $("#feed-connections-body");
+  try {
+    const h = await api("/analytics/provider-health?limit=15");
+    collectorBody.innerHTML = h.recent_collector_runs.map((r) => `<tr>
+      <td class="muted">${fmtDate(r.start_time)}</td>
+      <td class="num-cell num">${r.symbols_processed}</td>
+      <td class="num-cell num">${r.success_count}</td>
+      <td class="num-cell num">${r.failed_count > 0 ? '<span style="color:var(--bad);">' + r.failed_count + '</span>' : r.failed_count}</td>
+      <td class="muted">${r.error_message || "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="5" class="muted">No collector runs recorded yet.</td></tr>`;
+
+    feedBody.innerHTML = h.recent_feed_connections.map((r) => `<tr>
+      <td class="muted">${fmtDate(r.connected_at)}</td>
+      <td class="muted">${r.disconnected_at ? fmtDate(r.disconnected_at) : '<span class="muted">still connected</span>'}</td>
+      <td class="num-cell num">${r.ticks_processed}</td>
+      <td class="num-cell num">${r.duplicates_dropped}</td>
+      <td class="muted">${r.disconnect_reason || "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="5" class="muted">No feed connection history recorded yet.</td></tr>`;
+  } catch (e) {
+    collectorBody.innerHTML = `<tr><td colspan="5" class="error">${e.message}</td></tr>`;
+    feedBody.innerHTML = `<tr><td colspan="5" class="error">${e.message}</td></tr>`;
+  }
+}
+
 async function loadMarketDashboard() {
   const [regime, coverage, sectors, candidates] = await Promise.all([
     loadMarketRegime(),
@@ -747,6 +853,8 @@ async function loadMarketDashboard() {
     loadVolumeLeaders(),
     loadOiBuildup(),
     loadTriggerHistory(),
+    loadLiveTriggers(),
+    loadProviderHealth(),
   ]);
 
   const leading = sectors.filter((s) => s.rotation_state === "LEADING").length;
