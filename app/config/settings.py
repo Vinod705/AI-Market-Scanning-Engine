@@ -344,6 +344,22 @@ class Settings(BaseSettings):
     catalyst_breaking_news_window_minutes: int = 30
     catalyst_stale_news_window_hours: int = 24
 
+    # --- Signal Fusion Engine (Phase 11; sums to 1.0) ---
+    # These are the INITIAL weights specified for this phase — not fitted,
+    # not backtested, not claimed optimized. Purely configuration-driven:
+    # change these values to change the fusion, no code change needed.
+    # app.signals.signal_fusion_engine renormalizes across whichever
+    # components are actually AVAILABLE for a given symbol (e.g. OI is
+    # MISSING for a non-F&O-eligible symbol) rather than treating a
+    # missing input as zero.
+    signal_fusion_weight_technical: float = 0.25
+    signal_fusion_weight_volume: float = 0.15
+    signal_fusion_weight_oi: float = 0.15
+    signal_fusion_weight_sector_rrg: float = 0.15
+    signal_fusion_weight_market_regime: float = 0.10
+    signal_fusion_weight_news: float = 0.10
+    signal_fusion_weight_fundamentals: float = 0.10
+
     # --- Technical Score (0-100, reuses Phase 3 daily/session features; should sum to 1.0) ---
     technical_weight_trend: float = 0.25
     technical_weight_momentum: float = 0.20
