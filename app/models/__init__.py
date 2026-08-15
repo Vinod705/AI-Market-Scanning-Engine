@@ -12,6 +12,8 @@ from app.models.fundamental_snapshot import FundamentalSnapshot
 from app.models.intraday_price import IntradayPrice
 from app.models.market_data_feed_log import MarketDataFeedLog
 from app.models.market_status import MarketStatus
+from app.models.momentum_state import MomentumStateRecord
+from app.models.momentum_state_transition import MomentumStateTransition
 from app.models.oi_observation import OiObservation
 from app.models.scanner_log import ScannerLog
 from app.models.scanner_result import ScannerResult
@@ -33,6 +35,8 @@ __all__ = [
     "IntradayPrice",
     "MarketDataFeedLog",
     "MarketStatus",
+    "MomentumStateRecord",
+    "MomentumStateTransition",
     "OiObservation",
     "ScannerLog",
     "ScannerResult",
