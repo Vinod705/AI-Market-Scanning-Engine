@@ -361,17 +361,30 @@ def test_ipo_intraday_reports_insufficient_data_when_52w_high_low_missing() -> N
     assert "volume>min_volume" in candidate.failed_rules
 
 
-def test_ipo_intraday_still_respects_existing_setup_state_rule() -> None:
-    """The new price/volume filters are additive — an otherwise-perfect
-    price/volume profile still fails without a qualifying setup_state."""
+def test_ipo_intraday_qualifies_pre_breakout_and_labels_category() -> None:
+    """PRE_BREAKOUT is deliberately accepted (not just BREAKOUT_CONFIRMED/
+    MOMENTUM) — see IpoIntradayScanner's module docstring."""
     scanner = _ipo_intraday_scanner()
     candidate = _ipo_candidate(setup_state=SetupState.PRE_BREAKOUT)
     context = CandidateContext(symbol=_symbol(), candidate=candidate)
 
     outcome = scanner.scan(context)
 
+    assert outcome.qualified is True
+    assert candidate.alert_category == AlertCategory.IPO_PRE_BREAKOUT
+
+
+def test_ipo_intraday_rejects_with_no_setup_state() -> None:
+    """The new price/volume filters are additive — an otherwise-perfect
+    price/volume profile still fails with no setup_state at all."""
+    scanner = _ipo_intraday_scanner()
+    candidate = _ipo_candidate(setup_state=None)
+    context = CandidateContext(symbol=_symbol(), candidate=candidate)
+
+    outcome = scanner.scan(context)
+
     assert outcome.qualified is False
-    assert "setup_state_is_momentum_or_confirmed" in candidate.failed_rules
+    assert "setup_state_is_pre_breakout_confirmed_or_momentum" in candidate.failed_rules
 
 
 def test_ipo_intraday_rejects_without_volume_confirmation() -> None:
@@ -454,7 +467,7 @@ def test_scan_reports_insufficient_history_instead_of_crashing_for_new_ipo() -> 
     outcome = scanner.scan(context)
 
     assert outcome.qualified is False
-    assert "setup_state_is_momentum_or_confirmed" in candidate.failed_rules
+    assert "setup_state_is_pre_breakout_confirmed_or_momentum" in candidate.failed_rules
     assert "relative_volume>=threshold" in candidate.failed_rules
 
 

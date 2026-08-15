@@ -1,10 +1,11 @@
 """IPO Intraday Scanner.
 
 Qualifies IPO-universe symbols (see `app.universe.provider.UniverseProvider.get_ipo_universe`,
-real listing-date age, not a recency/chart-pattern proxy) already
-confirming or continuing a breakout — `SetupState.BREAKOUT_CONFIRMED` or
-`SetupState.MOMENTUM` — with volume confirmation and a minimum Overall
-Setup Score, plus four price/volume filters against the stock's trailing
+real listing-date age, not a recency/chart-pattern proxy) approaching,
+confirming, or continuing a breakout — `SetupState.PRE_BREAKOUT`,
+`SetupState.BREAKOUT_CONFIRMED`, or `SetupState.MOMENTUM` — with volume
+confirmation and a minimum Overall Setup Score, plus four price/volume
+filters against the stock's trailing
 52-week High/Low (see `PriceRepository.get_52_week_high_low` — NOT "since
 listing": our local daily_prices history is only ~400 days deep, so an
 unbounded aggregate would silently just be a ~400-day figure for an older
@@ -16,6 +17,14 @@ EMA200-stack trend check `breakout_v1` uses (see `app.decision.rules`):
 an IPO within its first ~200 trading days won't have that history yet,
 so requiring it would reject a genuine candidate by construction, not by
 genuine weakness.
+
+Includes `PRE_BREAKOUT` (approaching resistance, not through it yet) —
+a deliberate loosening vs. this scanner's original BREAKOUT_CONFIRMED/
+MOMENTUM-only gate, requested explicitly because live data showed almost
+no IPO-universe symbol currently sits at/above its resistance level, so
+the stricter gate was producing zero qualified candidates regardless of
+the price/volume/score thresholds below. Not backtested — a judgment
+call, same as every other threshold in this scanner.
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,8 +100,8 @@ class IpoIntradayScanner(CandidateScannerBase):
         )
 
         checks = {
-            "setup_state_is_momentum_or_confirmed": candidate.setup_state
-            in (SetupState.MOMENTUM, SetupState.BREAKOUT_CONFIRMED),
+            "setup_state_is_pre_breakout_confirmed_or_momentum": candidate.setup_state
+            in (SetupState.PRE_BREAKOUT, SetupState.BREAKOUT_CONFIRMED, SetupState.MOMENTUM),
             "relative_volume>=threshold": rvol is not None
             and rvol >= settings.ipo_intraday_min_rvol,
             "overall_score>=threshold": candidate.overall_score >= settings.ipo_intraday_min_score,
@@ -112,6 +121,8 @@ class IpoIntradayScanner(CandidateScannerBase):
                 AlertCategory.IPO_MOMENTUM
                 if candidate.setup_state == SetupState.MOMENTUM
                 else AlertCategory.IPO_BREAKOUT
+                if candidate.setup_state == SetupState.BREAKOUT_CONFIRMED
+                else AlertCategory.IPO_PRE_BREAKOUT
             )
             if qualified
             else None
