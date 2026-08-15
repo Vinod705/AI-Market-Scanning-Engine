@@ -1,15 +1,17 @@
 """Candidate-discovery sources — Phase 7's dual-scanner architecture.
 
-5paisa and TradingView are both meant to be *primary* candidate-discovery
-sources (see the Phase 7 spec): a symbol stays eligible whether one or
-both flag it, and the existing Technical Analysis engine still computes
-the technical score exactly once per symbol regardless of how many
-sources found it. `CandidateSourceProvider` is the extension point for
-that "found it independently" signal — `ScannerSource.FIVEPAISA` is not
-a provider instance here because it's not a separate lookup: it's the
-existing scanner pipeline itself (already entirely 5paisa-data-driven),
-so every candidate this pipeline produces is 5paisa-attributed by
-construction. Only *additional* sources need a `CandidateSourceProvider`.
+The base scanner pipeline (`app.scanner`/`app.candidates.builder`) is not
+a separate lookup with its own provider instance: it's whichever
+`MarketDataProvider` is configured as `Settings.active_market_data_provider`
+(Upstox by default since Phase 2; 5paisa remains selectable as the legacy
+option) — every candidate it produces is attributed to that provider by
+construction, resolved via `primary_scanner_source()` below rather than
+hardcoded, so the label stays correct if the active provider changes.
+`CandidateSourceProvider` is the extension point for an *additional*,
+independently-flagging source (see TradingView below) on top of that base
+attribution — a symbol stays eligible whether one or both flag it, and
+the existing Technical Analysis engine still computes the technical score
+exactly once per symbol regardless of how many sources found it.
 
 TradingView status (see `TradingViewSourceProvider`): investigated and
 confirmed NOT wireable as an automated backend source in this deployment
@@ -27,11 +29,26 @@ from enum import StrEnum
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.candidates.models import Universe
+from app.config.settings import Settings
 
 
 class ScannerSource(StrEnum):
     FIVEPAISA = "5PAISA"
+    UPSTOX = "UPSTOX"
     TRADINGVIEW = "TRADINGVIEW"
+
+
+def primary_scanner_source(settings: Settings) -> ScannerSource:
+    """The base scanner pipeline's own attribution — mirrors whichever
+    provider `Settings.active_market_data_provider` actually selects, so
+    this never drifts out of sync with reality the way a hardcoded label
+    would (as it did before this function existed: every candidate was
+    labeled "5PAISA" even after Upstox became the default provider)."""
+    return (
+        ScannerSource.UPSTOX
+        if settings.active_market_data_provider == "upstox"
+        else ScannerSource.FIVEPAISA
+    )
 
 
 class CandidateSourceProvider(ABC):

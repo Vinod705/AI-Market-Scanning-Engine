@@ -96,11 +96,35 @@ async def _seed_symbol(
         return symbol_id
 
 
-async def test_build_candidate_defaults_to_5paisa_only(
+async def test_build_candidate_defaults_to_upstox_only(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """`active_market_data_provider` defaults to "upstox" (Phase 2) — the
+    base scanner pipeline's own attribution must track that, not a
+    hardcoded "5PAISA" left over from before Upstox existed."""
+    symbol_id = await _seed_symbol(session_factory)
+    settings = Settings()
+    async with session_factory() as session:
+        symbol = await SymbolRepository(session).get_by_id(symbol_id)
+        assert symbol is not None
+        result = await build_candidate(
+            symbol=symbol,
+            universe=Universe.FNO,
+            scanner_name="fno_momentum_v1",
+            session=session,
+            fundamental_scorer=FundamentalScorer(settings),
+            technical_scorer=TechnicalScorer(settings),
+            settings=settings,
+        )
+    assert result.candidate is not None
+    assert result.candidate.scanner_sources == ["UPSTOX"]
+
+
+async def test_build_candidate_reflects_fivepaisa_when_that_is_the_active_provider(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     symbol_id = await _seed_symbol(session_factory)
-    settings = Settings()
+    settings = Settings(active_market_data_provider="fivepaisa")
     async with session_factory() as session:
         symbol = await SymbolRepository(session).get_by_id(symbol_id)
         assert symbol is not None
@@ -137,7 +161,7 @@ async def test_build_candidate_merges_second_source_when_it_flags_the_symbol(
             source_providers=[fake_source],
         )
     assert result.candidate is not None
-    assert result.candidate.scanner_sources == ["5PAISA", "TRADINGVIEW"]
+    assert result.candidate.scanner_sources == ["TRADINGVIEW", "UPSTOX"]
     assert fake_source.call_count == 1
 
 
@@ -160,7 +184,7 @@ async def test_build_candidate_does_not_add_source_that_did_not_flag_symbol(
             source_providers=[_FakeNeverFindsProvider()],
         )
     assert result.candidate is not None
-    assert result.candidate.scanner_sources == ["5PAISA"]
+    assert result.candidate.scanner_sources == ["UPSTOX"]
 
 
 async def test_scanner_sources_persisted_in_feature_snapshot(
@@ -183,15 +207,16 @@ async def test_scanner_sources_persisted_in_feature_snapshot(
         )
     assert result.candidate is not None
     snapshot = result.candidate.to_feature_snapshot()
-    assert snapshot["scanner_sources"] == ["5PAISA", "TRADINGVIEW"]
+    assert snapshot["scanner_sources"] == ["TRADINGVIEW", "UPSTOX"]
 
 
 async def test_dual_source_discovery_produces_one_row_not_two(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """A symbol found by both 5paisa (the scanner pipeline itself) and a
-    second source must still be exactly one scanner_results row with the
-    technical score computed once — not a duplicate alert/row per source."""
+    """A symbol found by both the base scanner pipeline (Upstox by
+    default) and a second source must still be exactly one
+    scanner_results row with the technical score computed once — not a
+    duplicate alert/row per source."""
     symbol_id = await _seed_symbol(session_factory)
     async with session_factory() as session:
         await FnoUniverseRepository(session).replace_all([symbol_id])
@@ -210,4 +235,4 @@ async def test_dual_source_discovery_produces_one_row_not_two(
     async with session_factory() as session:
         rows = await ScannerResultRepository(session).list_results(scanner_name="fno_momentum_v1")
     assert len(rows) == 1
-    assert rows[0].feature_snapshot["scanner_sources"] == ["5PAISA", "TRADINGVIEW"]
+    assert rows[0].feature_snapshot["scanner_sources"] == ["TRADINGVIEW", "UPSTOX"]

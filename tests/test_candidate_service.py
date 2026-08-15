@@ -87,7 +87,7 @@ async def test_list_candidates_returns_qualified_fno_candidate(
     assert summaries[0].symbol == "HINDCO"
     assert summaries[0].universe == "FNO"
     assert summaries[0].fundamental_score is None
-    assert summaries[0].scanner_sources == ["5PAISA"]
+    assert summaries[0].scanner_sources == ["UPSTOX"]
     assert summaries[0].scanner_confirmation_count == 1
     # Dashboard KPI row ("Strong Candidates") reuses the same compounding
     # engine as get_explain() — must be a real, well-formed value, never
@@ -111,7 +111,7 @@ async def test_explain_shows_scanner_sources(
         result = await CandidateService(session, Settings()).get_explain("HINDCO")
 
     assert result is not None
-    assert result.scanner_sources == ["5PAISA"]
+    assert result.scanner_sources == ["UPSTOX"]
     assert result.scanner_confirmation_count == 1
 
 

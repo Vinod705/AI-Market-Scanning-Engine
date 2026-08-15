@@ -19,7 +19,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.candidates.models import SetupState, StockCandidate, Universe
-from app.candidates.sources import CandidateSourceProvider, ScannerSource
+from app.candidates.sources import CandidateSourceProvider, primary_scanner_source
 from app.config.settings import Settings
 from app.decision.models import Quality
 from app.fundamentals.queue_models import FetchStatus
@@ -146,15 +146,17 @@ async def _resolve_scanner_sources(
     universe: Universe,
     session: AsyncSession,
     source_providers: list[CandidateSourceProvider] | None,
+    settings: Settings,
 ) -> list[str]:
-    """Every candidate this pipeline produces is 5paisa-attributed by
-    construction (see `app.candidates.sources` module docstring) — the
-    only thing left to resolve is whether any *additional* configured
-    source (e.g. `TradingViewSourceProvider`) independently flagged the
-    same symbol. This does not re-run or duplicate technical scoring;
-    it only adds to `scanner_sources` metadata on the single candidate
-    already being built."""
-    sources = {ScannerSource.FIVEPAISA.value}
+    """Every candidate this pipeline produces is attributed to whichever
+    provider is actually driving the scanner pipeline right now (see
+    `app.candidates.sources.primary_scanner_source`) — the only thing
+    left to resolve is whether any *additional* configured source (e.g.
+    `TradingViewSourceProvider`) independently flagged the same symbol.
+    This does not re-run or duplicate technical scoring; it only adds to
+    `scanner_sources` metadata on the single candidate already being
+    built."""
+    sources = {primary_scanner_source(settings).value}
     for provider in source_providers or []:
         found = await provider.discover(universe, session)
         if symbol.symbol in found:
@@ -202,7 +204,11 @@ async def build_candidate(
 
     overall_score = combine_scores(fundamental_result.score, technical_result.score, settings)
     scanner_sources = await _resolve_scanner_sources(
-        symbol=symbol, universe=universe, session=session, source_providers=source_providers
+        symbol=symbol,
+        universe=universe,
+        session=session,
+        source_providers=source_providers,
+        settings=settings,
     )
 
     snapshot = _daily_feature_snapshot(daily)

@@ -120,7 +120,14 @@ class MultiSourceFundamentalProvider(FundamentalDataProvider):
 
             if data is not None:
                 return data, status, error
-            if status == FetchStatus.RATE_LIMITED:
+            # RATE_LIMITED takes priority over a plain FAILED as the
+            # overall verdict (the queue must back off on a real rate
+            # limit even if a lower-priority source merely had no data),
+            # but a FAILED reason must still be captured rather than
+            # discarded — never overwrite a real error with None just
+            # because this particular provider's status wasn't the worst
+            # one seen so far.
+            if status == FetchStatus.RATE_LIMITED or worst_status != FetchStatus.RATE_LIMITED:
                 worst_status, last_error = status, error
 
         return None, worst_status, last_error

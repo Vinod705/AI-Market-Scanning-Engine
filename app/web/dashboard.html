@@ -32,6 +32,7 @@
 
     /* Categorical — scanner sources (fixed hue order, distinct from status) */
     --cat-5paisa: #6ea8fe;
+    --cat-upstox: #4f8cff;
     --cat-tradingview: #b39cf9;
     --cat-screener: #45d6c2;
 
@@ -123,6 +124,7 @@
 
   .badge-source { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; letter-spacing: .02em; margin-right: 4px; }
   .badge-5paisa { background: rgba(110, 168, 254, .14); color: var(--cat-5paisa); }
+  .badge-upstox { background: rgba(79, 140, 255, .14); color: var(--cat-upstox); }
   .badge-tradingview { background: rgba(179, 156, 249, .14); color: var(--cat-tradingview); }
   .badge-screener { background: rgba(69, 214, 194, .14); color: var(--cat-screener); }
   .badge-confirmed { background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(79, 140, 255, .3); }
@@ -219,12 +221,12 @@
   </header>
   <main>
     <div class="toolbar">
-      <a class="tab" data-tab="market">Market Dashboard</a>
-      <a class="tab active" data-tab="candidates">Candidates</a>
+      <a class="tab active" data-tab="market">Market Dashboard</a>
+      <a class="tab" data-tab="candidates">Candidates</a>
       <a class="tab hidden" id="admin-tab" data-tab="admin">Admin &rarr; Users</a>
     </div>
 
-    <section id="tab-market" class="hidden">
+    <section id="tab-market">
       <div class="kpi-grid" id="market-kpi-row"></div>
 
       <div class="section-grid">
@@ -287,7 +289,7 @@
       </div>
     </section>
 
-    <section id="tab-candidates">
+    <section id="tab-candidates" class="hidden">
       <div class="kpi-grid" id="kpi-row"></div>
 
       <div class="card">
@@ -417,8 +419,8 @@ function scoreCell(value) {
 }
 
 function sourceBadges(sources, count) {
-  const map = { "5PAISA": "badge-5paisa", "TRADINGVIEW": "badge-tradingview", "SCREENER": "badge-screener" };
-  const badges = (sources || []).map((s) => `<span class="badge-source ${map[s] || "badge-5paisa"}">${s}</span>`);
+  const map = { "5PAISA": "badge-5paisa", "UPSTOX": "badge-upstox", "TRADINGVIEW": "badge-tradingview", "SCREENER": "badge-screener" };
+  const badges = (sources || []).map((s) => `<span class="badge-source ${map[s] || "badge-upstox"}">${s}</span>`);
   if ((count || 0) >= 2) badges.push(`<span class="badge-source badge-confirmed">CONFIRMED ${count}x</span>`);
   return `<span class="source-row">${badges.join("")}</span>`;
 }
@@ -461,14 +463,10 @@ async function loadSystemHealth() {
     : `${Math.round(h.memory_used_mb)}/${Math.round(h.memory_total_mb)}MB (${h.memory_percent}%)`;
   const disk = h.disk_percent == null ? "—" : `${h.disk_used_gb}/${h.disk_total_gb}GB (${h.disk_percent}%)`;
 
-  let usageItem = "";
-  if (currentUser && currentUser.role === "ADMIN") {
-    try {
-      const q = await api("/admin/fundamental-queue");
-      usageItem = statusItem("Trendlyne usage ", q.is_paused ? "warning" : "healthy", `${q.requests_today}/${q.daily_budget}`);
-    } catch (e) { /* admin-only, ignore for non-admins or transient errors */ }
-  }
-
+  // Trendlyne is a dormant legacy fallback in this deployment (only
+  // engages if trendlyne_mcp is configured, which it isn't) — omitted
+  // from the strip entirely rather than shown as an inert "Not
+  // configured" line that reads as if the app still depends on it.
   const items = [
     marketItem,
     statusItem("VM CPU ", pctLevel(h.cpu_percent), h.cpu_percent == null ? "—" : h.cpu_percent + "%"),
@@ -476,11 +474,8 @@ async function loadSystemHealth() {
     statusItem("Disk ", pctLevel(h.disk_percent), disk),
     statusItem("App ", h.status === "healthy" ? "healthy" : "warning", h.status === "healthy" ? "Healthy" : "Degraded"),
     statusItem("DB ", h.database === "healthy" ? "healthy" : "critical", h.database === "healthy" ? "Healthy" : "Down"),
-    statusItem("Trendlyne ", h.trendlyne_mcp === "healthy" ? "healthy" : h.trendlyne_mcp === "not_configured" ? "unknown" : "critical",
-      h.trendlyne_mcp === "healthy" ? "Healthy" : h.trendlyne_mcp === "not_configured" ? "Not configured" : "Rate Limited"),
-    statusItem("Queue ", h.fundamental_queue === "healthy" ? "healthy" : h.fundamental_queue === "rate_limited" ? "warning" : h.fundamental_queue === "not_configured" ? "unknown" : "critical",
+    statusItem("Fundamentals Queue ", h.fundamental_queue === "healthy" ? "healthy" : h.fundamental_queue === "rate_limited" ? "warning" : h.fundamental_queue === "not_configured" ? "unknown" : "critical",
       h.fundamental_queue === "healthy" ? "Healthy" : h.fundamental_queue === "rate_limited" ? "Paused" : h.fundamental_queue === "not_configured" ? "Not configured" : "Unhealthy"),
-    usageItem,
   ].filter(Boolean);
 
   body.innerHTML = `${items.join("")}<span class="muted" style="margin-left:auto;">Updated ${new Date().toLocaleTimeString()}</span>`;
@@ -526,7 +521,7 @@ function showApp() {
   $("#who-role").textContent = currentUser.role;
   if (currentUser.role === "ADMIN") $("#admin-tab").classList.remove("hidden");
   else $("#admin-tab").classList.add("hidden");
-  loadCandidates();
+  loadMarketDashboard();
   startSystemHealthPolling();
 }
 
@@ -564,6 +559,7 @@ $$(".tab").forEach((tab) => {
     $("#tab-admin").classList.toggle("hidden", name !== "admin");
     if (name === "admin") { loadUsers(); loadFundamentalQueueStatus(); }
     if (name === "market") loadMarketDashboard();
+    if (name === "candidates" && allCandidates.length === 0) loadCandidates();
   });
 });
 
@@ -1048,7 +1044,7 @@ async function loadExplain(symbol) {
         <h3>Scanner Discovery</h3>
         <div class="source-row" style="margin-bottom:12px;">${sourceBadges(d.scanner_sources, d.scanner_confirmation_count)}</div>
         <div class="score-row">
-          <div class="score-box"><div class="label">5paisa</div><div class="value">${d.scanner_sources.includes("5PAISA") ? "Found" : "Not found"}</div></div>
+          <div class="score-box"><div class="label">Base Scanner</div><div class="value">${d.scanner_sources.find((s) => s === "UPSTOX" || s === "5PAISA") || "—"}</div></div>
           <div class="score-box"><div class="label">TradingView</div><div class="value">${d.scanner_sources.includes("TRADINGVIEW") ? "Found" : "Not found"}</div></div>
           <div class="score-box"><div class="label">Confirmations</div><div class="value">${d.scanner_confirmation_count}</div></div>
         </div>

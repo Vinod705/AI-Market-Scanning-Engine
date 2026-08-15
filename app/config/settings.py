@@ -306,36 +306,44 @@ class Settings(BaseSettings):
     # to call Trendlyne on every scan cycle for the same symbol.
     fundamental_cache_ttl_minutes: int = 240
 
-    # --- Fundamental Queue (Phase 7.x) ---
-    # A scan cycle can discover 500-700+ candidates; firing a Trendlyne
-    # request for every one in a tight loop exhausted the account's rate
-    # limit in minutes (see app/fundamentals/queue_service.py's module
-    # docstring for the incident). The queue processes candidates in small,
-    # paced batches instead — tune these against Trendlyne's actual
-    # documented/observed limits, not assumptions.
+    # --- Fundamental Queue (Phase 7.x, Trendlyne-derived; Phase 9+: Upstox is primary) ---
+    # A scan cycle can discover 500-700+ candidates; firing a request for
+    # every one in a tight loop is what originally exhausted Trendlyne's
+    # account-level rate limit in minutes (see
+    # app/fundamentals/queue_service.py's module docstring for that
+    # incident). The queue still processes candidates in small, paced
+    # batches for that reason, but the batch/request pacing below — not a
+    # daily account quota — is the real safety mechanism now that Upstox
+    # (self-pacing per-second/per-minute limits, no separate daily account
+    # cap) is the actual provider driving this queue.
     fundamental_batch_size: int = 10
     fundamental_batch_delay_seconds: float = 30.0
     fundamental_request_delay_seconds: float = 2.0
-    # How long to leave the whole queue paused after Trendlyne reports a
-    # rate limit, before trying again — deliberately coarse (not a tight
-    # retry loop): the queue checks this once per run, it never polls
-    # Trendlyne in a loop to detect when the limit clears.
+    # How long to leave the whole queue paused after the provider reports a
+    # real rate limit (HTTP 429), before trying again — deliberately coarse
+    # (not a tight retry loop): the queue checks this once per run, it
+    # never polls in a loop to detect when the limit clears. This reacts to
+    # whatever the active provider's API actually reports; it is not
+    # Trendlyne-specific.
     fundamental_rate_limit_cooldown_seconds: float = 1800.0
-    # Trendlyne's rate-limit error carries no reset-time/Retry-After info
-    # (see app/fundamentals/trendlyne_mcp_client.py) — the exact reset
-    # window is unknown, so rather than guess it, each consecutive
-    # rate-limited attempt (no success in between) waits
+    # A 429 carries no reset-time/Retry-After info from either provider —
+    # the exact reset window is unknown, so rather than guess it, each
+    # consecutive rate-limited attempt (no success in between) waits
     # cooldown * multiplier^n, capped at the max below. This is what stops
     # the queue from retrying every `fundamental_rate_limit_cooldown_seconds`
-    # forever while an account-level quota stays exhausted.
+    # forever while a real rate limit stays in effect.
     fundamental_rate_limit_backoff_multiplier: float = 2.0
     fundamental_rate_limit_max_cooldown_seconds: float = 21600.0  # 6h ceiling
-    # Hard ceilings so a single manual/accidental run can never consume the
-    # whole account quota. run cap bounds one run_queue() invocation; day
-    # cap bounds total requests across all runs today (tracked in
-    # fundamental_fetch_log, so it survives an application restart).
-    fundamental_max_requests_per_run: int = 200
-    fundamental_max_requests_per_day: int = 350
+    # Ceilings so a single manual/accidental run can never spin into an
+    # unbounded loop — a correctness safety net, not an account-conservation
+    # measure. Trendlyne's account had a real ~350/day quota that these
+    # used to mirror; Upstox has no such daily cap (confirmed live: 50
+    # req/sec, 500/min, 2000/30min — see UpstoxProvider), so both ceilings
+    # are set comfortably above this project's entire tracked universe
+    # (~9,800 symbols) rather than an arbitrary account limit that no
+    # longer applies.
+    fundamental_max_requests_per_run: int = 5000
+    fundamental_max_requests_per_day: int = 20000
 
     # --- News/Catalyst Engine (Phase 10) ---
     # Freshness is always computed live from published_at at read time
