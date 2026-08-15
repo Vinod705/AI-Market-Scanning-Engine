@@ -58,6 +58,19 @@ def _decimal_or_none(value: float) -> Decimal | None:
     return Decimal(str(round(float(value), 4)))
 
 
+def rolling_zscore(series: pd.Series, window: int = _ROLLING_WINDOW) -> pd.Series:
+    """Standard rolling Z-score (mean 0, std 1), rescaled to center 100 —
+    the same self-referential normalization RS-Ratio/RS-Momentum use below
+    (no external/invented scaling constant: each value is measured against
+    that series' own recent distribution). Reused as-is by
+    `app.analytics.sector.sector_strength` for price-performance and
+    momentum-acceleration normalization, so every "how unusual is this
+    reading" calculation in the codebase uses one technique, not several."""
+    mean = series.rolling(window).mean()
+    std = series.rolling(window).std()
+    return 100 + (series - mean) / std
+
+
 def classify_quadrant(rs_ratio: float, rs_momentum: float) -> RrgQuadrant | None:
     """`None` when either input is missing (NaN) — never guessed into a
     quadrant. The boundary (exactly 100 on either axis) is treated as the
@@ -92,14 +105,8 @@ def compute_rrg_series(
     rs_frame = RelativeStrengthFeatureCalculator.calculate(security_df, benchmark_df)
     rs_series = rs_frame["rs_vs_nifty"]
 
-    rs_mean = rs_series.rolling(window).mean()
-    rs_std = rs_series.rolling(window).std()
-    rs_ratio = 100 + (rs_series - rs_mean) / rs_std
-
-    rs_ratio_change = rs_ratio.diff()
-    change_mean = rs_ratio_change.rolling(window).mean()
-    change_std = rs_ratio_change.rolling(window).std()
-    rs_momentum = 100 + (rs_ratio_change - change_mean) / change_std
+    rs_ratio = rolling_zscore(rs_series, window)
+    rs_momentum = rolling_zscore(rs_ratio.diff(), window)
 
     computed_at = utc_now()
     points: list[RrgPoint] = []

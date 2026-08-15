@@ -215,6 +215,25 @@ class Settings(BaseSettings):
     scanner_score_weight_relative_strength: float = 0.10
     scanner_score_weight_support_resistance: float = 0.15
 
+    # --- Sector rotation: composite score weights (should sum to 1.0) ---
+    # Separate from `scanner_score_weight_*` above and from
+    # `decision_min_alert_score` below — sector rotation (app.analytics.sector)
+    # is its own analytics domain, not wired into scanner/decision scoring.
+    # `breadth`/`volume_participation` have no data source yet (no
+    # sector/industry metadata exists in this project — see
+    # app.analytics.sector.sector_breadth's docstring) so their weight is
+    # never applied; SectorScoreCalculator renormalizes across whichever
+    # weights actually have evidence rather than treating a missing input
+    # as zero.
+    sector_score_weight_relative_strength: float = 0.125
+    sector_score_weight_rrg_momentum: float = 0.125
+    sector_score_weight_momentum: float = 0.125
+    sector_score_weight_trend: float = 0.125
+    sector_score_weight_price_performance: float = 0.125
+    sector_score_weight_momentum_acceleration: float = 0.125
+    sector_score_weight_breadth: float = 0.125
+    sector_score_weight_volume_participation: float = 0.125
+
     # --- Decision engine: Decision Rules v1 thresholds ---
     decision_min_alert_score: float = 80.0
     decision_min_rvol: float = 2.0
