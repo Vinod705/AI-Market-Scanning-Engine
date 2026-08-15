@@ -234,6 +234,21 @@ class Settings(BaseSettings):
     sector_score_weight_breadth: float = 0.125
     sector_score_weight_volume_participation: float = 0.125
 
+    # --- Market regime: composite score weights (should sum to ~1.0) ---
+    # Separate from scanner/sector/decision weights above — market regime
+    # (app.analytics.market) is its own analytics domain, a confidence
+    # modifier for a future SignalFusionEngine, not wired into scanner,
+    # decision, or alert scoring yet. `sector_participation` is excluded
+    # from the composite (renormalized away) whenever the caller doesn't
+    # supply a sector symbol list — see app.analytics.market.regime.
+    market_regime_weight_advance_decline: float = 0.142857
+    market_regime_weight_up_down_volume: float = 0.142857
+    market_regime_weight_pct_above_ma: float = 0.142857
+    market_regime_weight_new_highs_lows: float = 0.142857
+    market_regime_weight_index_trend: float = 0.142857
+    market_regime_weight_volatility: float = 0.142857
+    market_regime_weight_sector_participation: float = 0.142858
+
     # --- Decision engine: Decision Rules v1 thresholds ---
     decision_min_alert_score: float = 80.0
     decision_min_rvol: float = 2.0

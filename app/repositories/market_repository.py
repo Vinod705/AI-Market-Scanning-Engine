@@ -153,6 +153,17 @@ class PriceRepository:
     async def get_latest_daily_bulk(self, symbol_ids: list[int]) -> dict[int, DailyPrice]:
         """Bulk equivalent of `get_latest_daily` — see
         `DailyFeatureRepository.get_latest_bulk`'s docstring for why."""
+        return await self.get_daily_bulk_at_rank(symbol_ids, rank=1)
+
+    async def get_daily_bulk_at_rank(
+        self, symbol_ids: list[int], *, rank: int
+    ) -> dict[int, DailyPrice]:
+        """The `rank`-th most recent daily bar (1 = latest, 2 = the one
+        before that, ...) for every symbol in one query — generalizes
+        `get_latest_daily_bulk` (`rank=1`). Added for market-breadth
+        advance/decline calculations (`app.analytics.market.breadth`),
+        which need *today's* and *yesterday's* close/volume for the whole
+        LISTED universe without an N+1 per-symbol query."""
         if not symbol_ids:
             return {}
         row_number = (
@@ -163,9 +174,29 @@ class PriceRepository:
         ranked = (
             select(DailyPrice.id, row_number).where(DailyPrice.symbol_id.in_(symbol_ids)).subquery()
         )
-        stmt = select(DailyPrice).join(ranked, DailyPrice.id == ranked.c.id).where(ranked.c.rn == 1)
+        stmt = select(DailyPrice).join(ranked, DailyPrice.id == ranked.c.id).where(
+            ranked.c.rn == rank
+        )
         rows = (await self._session.execute(stmt)).scalars().all()
         return {row.symbol_id: row for row in rows}
+
+    async def get_52_week_high_low_bulk(
+        self, symbol_ids: list[int]
+    ) -> dict[int, tuple[Decimal, Decimal]]:
+        """Bulk equivalent of `get_52_week_high_low` — one aggregate query
+        for the whole batch instead of one per symbol. Same bounded
+        365-day window and same "None if no bars in the window" contract,
+        just per-symbol absence instead of a single `None` return."""
+        if not symbol_ids:
+            return {}
+        window_start = date_.today() - timedelta(days=365)
+        stmt = (
+            select(DailyPrice.symbol_id, func.max(DailyPrice.high), func.min(DailyPrice.low))
+            .where(DailyPrice.symbol_id.in_(symbol_ids), DailyPrice.date >= window_start)
+            .group_by(DailyPrice.symbol_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {symbol_id: (high, low) for symbol_id, high, low in rows}
 
     async def list_symbol_ids_with_intraday_on(
         self, symbol_ids: list[int], day: date_
