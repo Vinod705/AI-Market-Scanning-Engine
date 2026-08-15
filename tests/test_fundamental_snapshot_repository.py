@@ -3,6 +3,7 @@ the cached-snapshot layer's persistence and freshness contract."""
 
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import Settings
@@ -162,3 +163,57 @@ async def test_never_fetched_snapshot_has_no_data_and_is_not_fresh(
     assert cached.is_fresh is False
     assert cached.status == FetchStatus.FAILED
     assert cached.error_message == "no resolvable ISIN"
+
+
+async def test_get_coverage_summary_counts_total_with_data_and_fresh(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    fresh_id = await _seed_symbol_id(session_factory, "FRESHSYM")
+    stale_id = await _seed_symbol_id(session_factory, "STALESYM")
+    failed_id = await _seed_symbol_id(session_factory, "FAILEDSYM")
+    settings = _settings(fundamental_cache_ttl_minutes=60)
+
+    async with session_factory() as session:
+        repo = FundamentalSnapshotRepository(session, settings)
+        await repo.upsert(
+            fresh_id,
+            data=FundamentalData(symbol="FRESHSYM", pe=20.0),
+            source="Upstox",
+            status=FetchStatus.SUCCESS,
+            error_message=None,
+        )
+        await repo.upsert(
+            failed_id,
+            data=None,
+            source=None,
+            status=FetchStatus.FAILED,
+            error_message="no resolvable ISIN",
+        )
+        await session.commit()
+
+    # Backdate the "stale" row's fetched_at directly, since upsert() always
+    # stamps the real current time — same technique the freshness test
+    # above would need if it manipulated fetched_at instead of the TTL.
+    async with session_factory() as session:
+        await FundamentalSnapshotRepository(session, settings).upsert(
+            stale_id,
+            data=FundamentalData(symbol="STALESYM", pe=15.0),
+            source="Upstox",
+            status=FetchStatus.SUCCESS,
+            error_message=None,
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        stmt = select(FundamentalSnapshot).where(FundamentalSnapshot.symbol_id == stale_id)
+        row = (await session.execute(stmt)).scalar_one()
+        row.fetched_at = datetime.now(UTC) - timedelta(hours=5)
+        await session.commit()
+
+    async with session_factory() as session:
+        summary = await FundamentalSnapshotRepository(session, settings).get_coverage_summary()
+
+    assert summary.total_snapshots == 3
+    assert summary.with_data_count == 2  # fresh + stale, not failed
+    assert summary.fresh_count == 1  # only the un-backdated one
+    assert summary.last_fetched_at is not None

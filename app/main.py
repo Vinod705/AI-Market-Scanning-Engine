@@ -12,6 +12,7 @@ from app.alerts.manager import AlertManager
 from app.alerts.queue import AlertQueue
 from app.api.admin_users import router as admin_users_router
 from app.api.alerts import router as alerts_router
+from app.api.analytics import router as analytics_router
 from app.api.auth import router as auth_router
 from app.api.candidates import router as candidates_router
 from app.api.dashboard import router as dashboard_router
@@ -56,6 +57,7 @@ from app.scanner.orb_scanner import OrbScanner
 from app.scanner.scanner_registry import ScannerRegistry
 from app.scanner.vcp_scanner import VcpScanner
 from app.scheduler.alert_jobs import register_alert_jobs
+from app.scheduler.analytics_snapshot_jobs import register_analytics_snapshot_jobs
 from app.scheduler.digest_jobs import register_digest_jobs
 from app.scheduler.fundamental_queue_jobs import register_fundamental_queue_jobs
 from app.scheduler.jobs import register_market_data_jobs
@@ -285,8 +287,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_fundamental_queue_jobs(scheduler_service, fundamental_queue)
     register_alert_jobs(scheduler_service, AsyncSessionLocal)
     register_digest_jobs(
-        scheduler_service, AsyncSessionLocal, ipo_telegram_provider, fno_telegram_provider
+        scheduler_service,
+        AsyncSessionLocal,
+        ipo_telegram_provider,
+        fno_telegram_provider,
+        telegram_provider,
     )
+    register_analytics_snapshot_jobs(scheduler_service, AsyncSessionLocal, settings)
     scheduler_service.start()
 
     # Restart recovery: reload PENDING/RETRYING alerts from PostgreSQL and
@@ -359,6 +366,7 @@ def create_app() -> FastAPI:
     app.include_router(features_router)
     app.include_router(scanner_router)
     app.include_router(alerts_router)
+    app.include_router(analytics_router)
     app.include_router(candidates_router)
     app.include_router(auth_router)
     app.include_router(admin_users_router)

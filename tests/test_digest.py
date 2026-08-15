@@ -1,6 +1,11 @@
 """Tests for app.notifications.digest (pure functions, no DB/network)."""
 
-from app.notifications.digest import DigestEntry, build_digest_text, split_by_universe
+from app.notifications.digest import (
+    DigestEntry,
+    build_digest_text,
+    build_market_overview_text,
+    split_by_universe,
+)
 
 
 def _entry(symbol: str, category: str | None, score: float) -> DigestEntry:
@@ -80,3 +85,64 @@ def test_build_digest_text_handles_missing_category() -> None:
     text = build_digest_text([_entry("XYZ", None, 10.0)], universe_label="F&O")
     assert text is not None
     assert "UNKNOWN" in text
+
+
+def test_build_market_overview_returns_none_when_nothing_to_say() -> None:
+    text = build_market_overview_text(
+        regime=None,
+        regime_score=None,
+        sector_rotation_counts={},
+        momentum_trigger_count=0,
+        lookback_hours=9.0,
+    )
+    assert text is None
+
+
+def test_build_market_overview_shows_regime_and_score() -> None:
+    text = build_market_overview_text(
+        regime="SUPPORTIVE",
+        regime_score=78.5,
+        sector_rotation_counts={},
+        momentum_trigger_count=0,
+        lookback_hours=9.0,
+    )
+    assert text is not None
+    assert "Regime: SUPPORTIVE (score 78.5)" in text
+
+
+def test_build_market_overview_reports_no_snapshot_yet_when_regime_missing() -> None:
+    text = build_market_overview_text(
+        regime=None,
+        regime_score=None,
+        sector_rotation_counts={},
+        momentum_trigger_count=3,
+        lookback_hours=9.0,
+    )
+    assert text is not None
+    assert "Regime: no snapshot yet" in text
+
+
+def test_build_market_overview_includes_sector_counts() -> None:
+    text = build_market_overview_text(
+        regime="NEUTRAL",
+        regime_score=50.0,
+        sector_rotation_counts={"LEADING": 2, "LAGGING": 1},
+        momentum_trigger_count=0,
+        lookback_hours=9.0,
+    )
+    assert text is not None
+    assert "Sectors:" in text
+    assert "2 leading" in text
+    assert "1 lagging" in text
+
+
+def test_build_market_overview_includes_momentum_trigger_count() -> None:
+    text = build_market_overview_text(
+        regime="SUPPORTIVE",
+        regime_score=80.0,
+        sector_rotation_counts={},
+        momentum_trigger_count=7,
+        lookback_hours=9.0,
+    )
+    assert text is not None
+    assert "Momentum triggers: 7" in text

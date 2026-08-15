@@ -11,6 +11,7 @@ from app.models.fundamental_fetch_log import FundamentalFetchLog
 from app.models.fundamental_snapshot import FundamentalSnapshot
 from app.models.intraday_price import IntradayPrice
 from app.models.market_data_feed_log import MarketDataFeedLog
+from app.models.market_regime_snapshot import MarketRegimeSnapshot
 from app.models.market_status import MarketStatus
 from app.models.momentum_state import MomentumStateRecord
 from app.models.momentum_state_transition import MomentumStateTransition
@@ -18,6 +19,7 @@ from app.models.oi_observation import OiObservation
 from app.models.scanner_log import ScannerLog
 from app.models.scanner_result import ScannerResult
 from app.models.scanner_run import ScannerRun
+from app.models.sector_rrg_snapshot import SectorRrgSnapshot
 from app.models.session_feature import SessionFeature
 from app.models.symbol import Symbol
 from app.models.user import User
@@ -34,6 +36,7 @@ __all__ = [
     "FundamentalSnapshot",
     "IntradayPrice",
     "MarketDataFeedLog",
+    "MarketRegimeSnapshot",
     "MarketStatus",
     "MomentumStateRecord",
     "MomentumStateTransition",
@@ -41,6 +44,7 @@ __all__ = [
     "ScannerLog",
     "ScannerResult",
     "ScannerRun",
+    "SectorRrgSnapshot",
     "SessionFeature",
     "Symbol",
     "User",

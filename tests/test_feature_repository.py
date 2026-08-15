@@ -64,3 +64,28 @@ async def test_get_status_summary_counts_distinct_symbols(
         assert summary.symbols_with_features == 2
         assert summary.total_daily_feature_rows == 3
         assert summary.last_computed_at is not None
+
+
+async def test_list_top_relative_volume_uses_latest_row_per_symbol_ordered_desc(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        symbol_repo = SymbolRepository(session)
+        low = await symbol_repo.upsert(ProviderSymbol(symbol="LOWRVOL", exchange="N", instrument_token="1"))
+        high = await symbol_repo.upsert(ProviderSymbol(symbol="HIGHRVOL", exchange="N", instrument_token="2"))
+        no_rvol = await symbol_repo.upsert(ProviderSymbol(symbol="NORVOL", exchange="N", instrument_token="3"))
+        await session.commit()
+
+        repo = DailyFeatureRepository(session)
+        # An older, higher reading for the same symbol must not shadow its
+        # own more recent (lower) reading.
+        await repo.upsert(high.id, date(2026, 1, 4), {"relative_volume": 9.0})
+        await repo.upsert(high.id, date(2026, 1, 5), {"relative_volume": 3.5})
+        await repo.upsert(low.id, date(2026, 1, 5), {"relative_volume": 1.1})
+        await repo.upsert(no_rvol.id, date(2026, 1, 5), {"rsi14": 50})
+        await session.commit()
+
+        results = await repo.list_top_relative_volume(limit=10)
+
+    assert [r.symbol_id for r in results] == [high.id, low.id]
+    assert float(results[0].relative_volume) == 3.5

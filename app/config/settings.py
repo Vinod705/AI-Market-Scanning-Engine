@@ -369,6 +369,33 @@ class Settings(BaseSettings):
     # mostly-missing evidence.
     pipeline_min_confidence_pct: float = 40.0
 
+    # --- Analytics snapshot jobs (Phase 15) ---
+    # Market regime (app.analytics.market.regime) and sector/RRG
+    # (app.analytics.sector.sector_rotation) are pure compute-on-call
+    # functions with no persistence of their own — this project's
+    # read-only dashboard must never trigger a live scanner-style
+    # calculation on a request, so a scheduled job (see
+    # app.scheduler.analytics_snapshot_jobs) runs them periodically and
+    # persists the result; the dashboard/digest only ever read that
+    # cache. There is no fixed "the sectors" list stored anywhere in this
+    # project (confirmed absent — see regime.py/sector_rotation.py's own
+    # docstrings), so the sector index symbols to snapshot must be
+    # supplied by the operator, not invented here; empty by default,
+    # which degrades to "no sector/RRG data" rather than fabricating a
+    # symbol list that might not even exist in this Upstox NSE dataset.
+    regime_sector_symbols: str = ""  # comma-separated, e.g. "NIFTY IT,NIFTY BANK,NIFTY AUTO"
+    # A judgment call, not a validated cadence: regime/RRG inputs
+    # (DailyFeature, breadth) only update once per trading day via the
+    # EOD feature pipeline, so snapshotting far more often than this
+    # would just repeat the same reading — hourly is a reasonable
+    # default for a local single-operator tool, not a claim of optimal
+    # freshness.
+    analytics_snapshot_interval_minutes: int = 60
+
+    @property
+    def regime_sector_symbol_list(self) -> list[str]:
+        return [s.strip() for s in self.regime_sector_symbols.split(",") if s.strip()]
+
     # --- Technical Score (0-100, reuses Phase 3 daily/session features; should sum to 1.0) ---
     technical_weight_trend: float = 0.25
     technical_weight_momentum: float = 0.20

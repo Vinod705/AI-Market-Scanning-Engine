@@ -1,7 +1,10 @@
 """Persistence for `momentum_states` (current position) and
 `momentum_state_transitions` (append-only log)."""
 
-from sqlalchemy import select
+from collections.abc import Iterable
+from datetime import datetime
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.momentum_state import MomentumStateRecord
@@ -53,3 +56,40 @@ class MomentumStateRepository:
     @staticmethod
     def state_of(record: MomentumStateRecord | None) -> MomentumState | None:
         return MomentumState(record.state) if record is not None else None
+
+    async def list_by_states(
+        self, states: Iterable[MomentumState], limit: int = 20
+    ) -> list[MomentumStateRecord]:
+        """Current position for every symbol sitting in one of `states` —
+        a read-only view over `momentum_states`, never touching the
+        engine that put a symbol there. Used for the dashboard's "Top
+        Momentum Candidates" section, typically called with
+        `ALERT_WORTHY_STATES`."""
+        stmt = (
+            select(MomentumStateRecord)
+            .where(MomentumStateRecord.state.in_([s.value for s in states]))
+            .order_by(MomentumStateRecord.score.desc())
+            .limit(limit)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def list_recent_transitions(self, limit: int = 50) -> list[MomentumStateTransition]:
+        """Most recent rows from the append-only transition log, across
+        all symbols — the dashboard's "Trigger History" section."""
+        stmt = (
+            select(MomentumStateTransition)
+            .order_by(MomentumStateTransition.timestamp.desc())
+            .limit(limit)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def count_transitions_since(
+        self, since: datetime, states: Iterable[MomentumState]
+    ) -> int:
+        """Used by the digest job to summarize momentum activity over its
+        lookback window without loading every row into Python."""
+        stmt = select(func.count(MomentumStateTransition.id)).where(
+            MomentumStateTransition.timestamp >= since,
+            MomentumStateTransition.to_state.in_([s.value for s in states]),
+        )
+        return (await self._session.execute(stmt)).scalar_one()

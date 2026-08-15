@@ -37,8 +37,11 @@ async def test_register_digest_jobs_adds_expected_jobs_at_correct_times(
 
     ipo_provider = TelegramProvider(settings, channel_name="telegram_ipo")
     fno_provider = TelegramProvider(settings, channel_name="telegram_fno")
+    default_provider = TelegramProvider(settings, channel_name="telegram")
 
-    register_digest_jobs(scheduler_service, session_factory, ipo_provider, fno_provider)
+    register_digest_jobs(
+        scheduler_service, session_factory, ipo_provider, fno_provider, default_provider
+    )
 
     jobs_by_id = {job.id: job for job in scheduler_service.jobs}
     assert JOB_ID_DIGEST_MORNING in jobs_by_id

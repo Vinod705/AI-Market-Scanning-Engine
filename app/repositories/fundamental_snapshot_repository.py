@@ -4,11 +4,12 @@ API, a future intraday-scanner read) that must never itself call a live
 fundamental provider.
 """
 
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from datetime import UTC, timedelta
 from datetime import date as date_
+from datetime import datetime as datetime_
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings
@@ -41,6 +42,18 @@ def _from_cache_dict(
 ) -> FundamentalData:
     known = {name: raw[name] for name in _CACHED_FIELDS if name in raw}
     return FundamentalData(symbol=symbol, as_of=as_of, **known)  # type: ignore[arg-type]
+
+
+@dataclass
+class FundamentalCoverageSummary:
+    """Universe-wide coverage overview — the dashboard's "Fundamentals"
+    section is about how much of the tracked universe has usable cached
+    data, not any one symbol's score (that's already on `/candidates`)."""
+
+    total_snapshots: int
+    with_data_count: int
+    fresh_count: int
+    last_fetched_at: datetime_ | None
 
 
 class FundamentalSnapshotRepository:
@@ -120,6 +133,25 @@ class FundamentalSnapshotRepository:
             status=FetchStatus(row.status),
             error_message=row.error_message,
             is_fresh=is_fresh,
+        )
+
+    async def get_coverage_summary(self) -> FundamentalCoverageSummary:
+        now = utc_now()
+        fresh_cutoff = now - timedelta(minutes=self._settings.fundamental_cache_ttl_minutes)
+        stmt = select(
+            func.count(FundamentalSnapshot.id),
+            func.count(FundamentalSnapshot.id).filter(FundamentalSnapshot.data.isnot(None)),
+            func.count(FundamentalSnapshot.id).filter(
+                FundamentalSnapshot.fetched_at >= fresh_cutoff
+            ),
+            func.max(FundamentalSnapshot.fetched_at),
+        )
+        total, with_data, fresh, last_fetched_at = (await self._session.execute(stmt)).one()
+        return FundamentalCoverageSummary(
+            total_snapshots=total or 0,
+            with_data_count=with_data or 0,
+            fresh_count=fresh or 0,
+            last_fetched_at=last_fetched_at,
         )
 
     async def _get(self, symbol_id: int) -> FundamentalSnapshot | None:

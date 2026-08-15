@@ -219,9 +219,73 @@
   </header>
   <main>
     <div class="toolbar">
+      <a class="tab" data-tab="market">Market Dashboard</a>
       <a class="tab active" data-tab="candidates">Candidates</a>
       <a class="tab hidden" id="admin-tab" data-tab="admin">Admin &rarr; Users</a>
     </div>
+
+    <section id="tab-market" class="hidden">
+      <div class="kpi-grid" id="market-kpi-row"></div>
+
+      <div class="section-grid">
+        <div class="card" id="regime-card"><h3>Market Regime</h3><div class="muted">Loading&hellip;</div></div>
+        <div class="card" id="fundamentals-coverage-card"><h3>Fundamentals Coverage</h3><div class="muted">Loading&hellip;</div></div>
+      </div>
+
+      <div class="section-grid">
+        <div class="card" id="sector-rotation-card"><h3>Sector Rotation</h3><div class="muted">Loading&hellip;</div></div>
+        <div class="card" id="rrg-card"><h3>Relative Rotation Graph (RRG)</h3><div class="muted">Loading&hellip;</div></div>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <h3 style="margin:0;">Top Momentum Candidates</h3>
+          <button class="secondary" id="refresh-market">Refresh</button>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Symbol</th><th>State</th><th class="num-cell">Score</th><th>Reason</th><th>Entered</th></tr></thead>
+            <tbody id="momentum-candidates-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="section-grid">
+        <div class="card">
+          <h3>Volume / RVOL Leaders</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Symbol</th><th class="num-cell">RVOL</th><th>Spike</th><th class="num-cell">20d Avg Vol</th></tr></thead>
+              <tbody id="volume-leaders-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <h3>OI Buildup</h3>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Symbol</th><th>Classification</th><th class="num-cell">OI &Delta;%</th><th class="num-cell">Price &Delta;%</th></tr></thead>
+              <tbody id="oi-buildup-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="news-card">
+        <h3>News / Catalysts</h3>
+        <div class="muted">Not available yet — this project has no persisted news cache (see Phase 10/11); wiring a scheduled catalyst snapshot job, mirroring the market regime/RRG snapshots above, is a separate, not-yet-built piece of work.</div>
+      </div>
+
+      <div class="card">
+        <h3>Trigger History</h3>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Symbol</th><th>From</th><th>To</th><th class="num-cell">Score</th><th>Reason</th><th>When</th></tr></thead>
+            <tbody id="trigger-history-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
     <section id="tab-candidates">
       <div class="kpi-grid" id="kpi-row"></div>
@@ -323,6 +387,11 @@ function pill(status) {
     MINIMUM_OPPORTUNITY: "pill-warn", GOOD: "pill-mid", STRONG: "pill-good", VERY_STRONG: "pill-good", EXCEPTIONAL: "pill-good",
     HIGH: "pill-good", MEDIUM: "pill-mid", LOW: "pill-neutral",
     ALERT: "pill-good", REJECT: "pill-bad",
+    TRIGGERED: "pill-good", CONFIRMED: "pill-good", ACTIVATING: "pill-mid", SETUP: "pill-neutral",
+    EXHAUSTED: "pill-neutral", INVALIDATED: "pill-bad",
+    LEADING: "pill-good", STRENGTHENING: "pill-mid", WEAKENING: "pill-warn", LAGGING: "pill-bad",
+    SUPPORTIVE: "pill-good", RISK_OFF: "pill-bad",
+    LONG_BUILDUP: "pill-good", SHORT_COVERING: "pill-good", SHORT_BUILDUP: "pill-bad", LONG_UNWINDING: "pill-warn",
   };
   const cls = map[status] || "pill-neutral";
   return `<span class="pill ${cls}">${status}</span>`;
@@ -490,11 +559,209 @@ $$(".tab").forEach((tab) => {
     $$(".tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     const name = tab.dataset.tab;
+    $("#tab-market").classList.toggle("hidden", name !== "market");
     $("#tab-candidates").classList.toggle("hidden", name !== "candidates");
     $("#tab-admin").classList.toggle("hidden", name !== "admin");
     if (name === "admin") { loadUsers(); loadFundamentalQueueStatus(); }
+    if (name === "market") loadMarketDashboard();
   });
 });
+
+// ---------------- Market Dashboard (Phase 15, read-only) ----------------
+// Every fetch below hits a GET /analytics/* route that only ever reads an
+// already-computed table (a scheduled snapshot job's output, or an
+// existing engine's own persisted state) — nothing here triggers a live
+// scanner/SignalFusion/regime/RRG calculation on load or refresh.
+
+function regimeScoreText(v) { return v === null || v === undefined ? "" : ` (score ${Number(v).toFixed(1)})`; }
+
+async function loadMarketRegime() {
+  const el = $("#regime-card");
+  try {
+    const r = await api("/analytics/market-regime");
+    if (!r) {
+      el.innerHTML = `<h3>Market Regime</h3><div class="muted">No snapshot yet — the analytics snapshot job hasn't run.</div>`;
+      return null;
+    }
+    el.innerHTML = `<h3>Market Regime</h3>
+      <div class="score-row">
+        <div class="score-box"><div class="label">Regime</div><div class="value">${r.regime ? pill(r.regime) : '<span class="unknown-val">UNKNOWN</span>'}${regimeScoreText(r.score)}</div></div>
+        <div class="score-box"><div class="label">Index Trend</div><div class="value">${r.index_symbol} ${r.index_trend_direction || "—"}</div></div>
+        <div class="score-box"><div class="label">Volatility</div><div class="value">${r.volatility_state || "—"}</div></div>
+      </div>
+      <div class="muted" style="margin-top:10px;">As of ${r.as_of} &middot; computed ${fmtDate(r.computed_at)}</div>
+      ${r.missing_evidence.length ? `<div class="muted" style="margin-top:6px;">Missing: ${r.missing_evidence.join(", ")}</div>` : ""}`;
+    return r;
+  } catch (e) {
+    el.innerHTML = `<h3>Market Regime</h3><div class="error">${e.message}</div>`;
+    return null;
+  }
+}
+
+async function loadFundamentalsCoverage() {
+  const el = $("#fundamentals-coverage-card");
+  try {
+    const c = await api("/analytics/fundamentals-coverage");
+    const pct = (num) => c.total_symbols_tracked ? Math.round((num / c.total_symbols_tracked) * 100) : 0;
+    el.innerHTML = `<h3>Fundamentals Coverage</h3>
+      <div class="score-row">
+        <div class="score-box"><div class="label">Tracked</div><div class="score-big">${c.total_symbols_tracked}</div></div>
+        <div class="score-box"><div class="label">With Data</div><div class="value">${c.with_data_count} (${pct(c.with_data_count)}%)</div></div>
+        <div class="score-box"><div class="label">Fresh</div><div class="value">${c.fresh_count} (${pct(c.fresh_count)}%)</div></div>
+      </div>
+      <div class="muted" style="margin-top:10px;">Last fetched ${fmtDate(c.last_fetched_at)}</div>`;
+    return c;
+  } catch (e) {
+    el.innerHTML = `<h3>Fundamentals Coverage</h3><div class="error">${e.message}</div>`;
+    return null;
+  }
+}
+
+async function loadSectorRrg() {
+  const rotationEl = $("#sector-rotation-card");
+  const rrgEl = $("#rrg-card");
+  try {
+    const sectors = await api("/analytics/sector-rrg");
+    if (sectors.length === 0) {
+      const msg = `<div class="muted">No sector data yet — set REGIME_SECTOR_SYMBOLS and wait for the next analytics snapshot.</div>`;
+      rotationEl.innerHTML = `<h3>Sector Rotation</h3>${msg}`;
+      rrgEl.innerHTML = `<h3>Relative Rotation Graph (RRG)</h3>${msg}`;
+      return sectors;
+    }
+
+    const groups = { LEADING: [], STRENGTHENING: [], WEAKENING: [], LAGGING: [] };
+    sectors.forEach((s) => { if (s.rotation_state && groups[s.rotation_state]) groups[s.rotation_state].push(s); });
+    const rows = Object.entries(groups).map(([state, items]) => `<div class="factor-row">
+        <div class="factor-name">${pill(state)} <span class="muted">${items.length} sector(s)</span></div>
+        <div>${items.map((s) => s.sector_symbol).join(", ") || "—"}</div>
+      </div>`).join("");
+    rotationEl.innerHTML = `<h3>Sector Rotation</h3>${rows}`;
+
+    rrgEl.innerHTML = `<h3>Relative Rotation Graph (RRG)</h3>${renderRrgScatter(sectors)}`;
+    return sectors;
+  } catch (e) {
+    rotationEl.innerHTML = `<h3>Sector Rotation</h3><div class="error">${e.message}</div>`;
+    rrgEl.innerHTML = `<h3>Relative Rotation Graph (RRG)</h3><div class="error">${e.message}</div>`;
+    return [];
+  }
+}
+
+function renderRrgScatter(sectors) {
+  const points = sectors.filter((s) => s.rs_ratio !== null && s.rs_momentum !== null);
+  if (points.length === 0) return `<div class="muted">No RRG-plottable sectors (rs_ratio/rs_momentum unavailable).</div>`;
+
+  const size = 300, center = size / 2, scale = 8; // px per RRG unit, centered at (100,100)
+  const clamp = (v) => Math.max(8, Math.min(size - 8, v));
+  const colorFor = { LEADING: "var(--good)", STRENGTHENING: "var(--mid)", WEAKENING: "var(--warn)", LAGGING: "var(--bad)" };
+
+  const dots = points.map((s) => {
+    const x = clamp(center + (Number(s.rs_ratio) - 100) * scale);
+    const y = clamp(center - (Number(s.rs_momentum) - 100) * scale);
+    const color = colorFor[s.rotation_state] || "var(--neutral)";
+    return `<circle cx="${x}" cy="${y}" r="5" fill="${color}" />
+      <text x="${x + 7}" y="${y + 3}" font-size="9" fill="var(--text-secondary)">${s.sector_symbol}</text>`;
+  }).join("");
+
+  return `<svg viewBox="0 0 ${size} ${size}" style="width:100%; max-width:340px; display:block; margin:0 auto;">
+    <line x1="${center}" y1="0" x2="${center}" y2="${size}" stroke="var(--border-strong)" stroke-width="1" />
+    <line x1="0" y1="${center}" x2="${size}" y2="${center}" stroke="var(--border-strong)" stroke-width="1" />
+    <text x="${size - 60}" y="14" font-size="9" fill="var(--good)">LEADING</text>
+    <text x="6" y="14" font-size="9" fill="var(--mid)">IMPROVING</text>
+    <text x="6" y="${size - 6}" font-size="9" fill="var(--bad)">LAGGING</text>
+    <text x="${size - 68}" y="${size - 6}" font-size="9" fill="var(--warn)">WEAKENING</text>
+    ${dots}
+  </svg>
+  <div class="muted" style="text-align:center; margin-top:4px;">X: RS-Ratio &middot; Y: RS-Momentum (both centered at 100)</div>`;
+}
+
+async function loadMomentumCandidates() {
+  const body = $("#momentum-candidates-body");
+  try {
+    const rows = await api("/analytics/momentum/candidates?limit=20");
+    body.innerHTML = rows.map((r) => `<tr>
+      <td class="symbol-cell">${r.symbol}</td><td>${pill(r.state)}</td>
+      <td class="num-cell num">${Number(r.score).toFixed(1)}</td>
+      <td class="muted">${r.reason}</td><td class="muted">${fmtDate(r.entered_at)}</td>
+    </tr>`).join("") || `<tr><td colspan="5" class="muted">No symbols currently TRIGGERED/CONFIRMED.</td></tr>`;
+    return rows;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="error">${e.message}</td></tr>`;
+    return [];
+  }
+}
+
+async function loadVolumeLeaders() {
+  const body = $("#volume-leaders-body");
+  try {
+    const rows = await api("/analytics/volume-leaders?limit=20");
+    body.innerHTML = rows.map((r) => `<tr>
+      <td class="symbol-cell">${r.symbol}</td>
+      <td class="num-cell num">${Number(r.relative_volume).toFixed(2)}x</td>
+      <td>${r.volume_spike ? pill("PASS") : '<span class="muted">—</span>'}</td>
+      <td class="num-cell num muted">${r.volume_ma20 !== null ? r.volume_ma20.toLocaleString() : "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="4" class="muted">No relative-volume data yet.</td></tr>`;
+    return rows;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="4" class="error">${e.message}</td></tr>`;
+    return [];
+  }
+}
+
+async function loadOiBuildup() {
+  const body = $("#oi-buildup-body");
+  try {
+    const rows = await api("/analytics/oi-buildup?limit=20");
+    body.innerHTML = rows.map((r) => `<tr>
+      <td class="symbol-cell">${r.symbol}</td><td>${pill(r.classification)}</td>
+      <td class="num-cell num">${r.oi_change_pct !== null ? Number(r.oi_change_pct).toFixed(1) + "%" : "—"}</td>
+      <td class="num-cell num">${r.price_change_pct !== null ? Number(r.price_change_pct).toFixed(1) + "%" : "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="4" class="muted">No F&amp;O OI buildup activity observed yet.</td></tr>`;
+    return rows;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="4" class="error">${e.message}</td></tr>`;
+    return [];
+  }
+}
+
+async function loadTriggerHistory() {
+  const body = $("#trigger-history-body");
+  try {
+    const rows = await api("/analytics/momentum/history?limit=50");
+    body.innerHTML = rows.map((r) => `<tr>
+      <td class="symbol-cell">${r.symbol}</td>
+      <td>${r.from_state ? pill(r.from_state) : '<span class="muted">—</span>'}</td>
+      <td>${pill(r.to_state)}</td>
+      <td class="num-cell num">${Number(r.score).toFixed(1)}</td>
+      <td class="muted">${r.reason}</td>
+      <td class="muted">${fmtDate(r.timestamp)}</td>
+    </tr>`).join("") || `<tr><td colspan="6" class="muted">No state transitions recorded yet.</td></tr>`;
+    return rows;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6" class="error">${e.message}</td></tr>`;
+    return [];
+  }
+}
+
+async function loadMarketDashboard() {
+  const [regime, coverage, sectors, candidates] = await Promise.all([
+    loadMarketRegime(),
+    loadFundamentalsCoverage(),
+    loadSectorRrg(),
+    loadMomentumCandidates(),
+    loadVolumeLeaders(),
+    loadOiBuildup(),
+    loadTriggerHistory(),
+  ]);
+
+  const leading = sectors.filter((s) => s.rotation_state === "LEADING").length;
+  $("#market-kpi-row").innerHTML = [
+    { label: "Regime", value: regime && regime.regime ? regime.regime : "—" },
+    { label: "Sectors Leading", value: sectors.length ? `${leading}/${sectors.length}` : "—" },
+    { label: "Momentum Candidates", value: candidates.length },
+    { label: "Fundamentals Fresh", value: coverage ? coverage.fresh_count : "—" },
+  ].map((k) => `<div class="kpi-card"><div class="kpi-label">${k.label}</div><div class="kpi-value">${k.value}</div></div>`).join("");
+}
+$("#refresh-market").addEventListener("click", loadMarketDashboard);
 
 // ---------------- Candidates + explainability ----------------
 

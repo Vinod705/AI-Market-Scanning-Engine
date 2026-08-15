@@ -50,3 +50,38 @@ def build_digest_text(entries: list[DigestEntry], *, universe_label: str) -> str
         label = _CATEGORY_LABELS.get(entry.alert_category or "", entry.alert_category or "UNKNOWN")
         lines.append(f"• {entry.symbol} — {label} (score {entry.score:.1f})")
     return "\n".join(lines)
+
+
+def build_market_overview_text(
+    *,
+    regime: str | None,
+    regime_score: float | None,
+    sector_rotation_counts: dict[str, int],
+    momentum_trigger_count: int,
+    lookback_hours: float,
+) -> str | None:
+    """Summarizes the same stored analytics snapshots the dashboard reads
+    (see `app.scheduler.analytics_snapshot_jobs`/`app.momentum`) — no
+    computation happens here, only formatting of values the caller
+    already read from the DB. `None` when there is nothing to say at
+    all (no regime snapshot yet AND no sector data AND no momentum
+    activity), same "skip rather than send an empty digest" rule as
+    `build_digest_text`."""
+    if regime is None and not sector_rotation_counts and momentum_trigger_count == 0:
+        return None
+
+    lines = [f"\U0001f30e Market Overview — last {lookback_hours:.0f}h", ""]
+
+    if regime is not None:
+        score_text = f" (score {regime_score:.1f})" if regime_score is not None else ""
+        lines.append(f"Regime: {regime}{score_text}")
+    else:
+        lines.append("Regime: no snapshot yet")
+
+    if sector_rotation_counts:
+        parts = [f"{count} {state.lower()}" for state, count in sector_rotation_counts.items()]
+        lines.append("Sectors: " + ", ".join(parts))
+
+    lines.append(f"Momentum triggers: {momentum_trigger_count}")
+
+    return "\n".join(lines)

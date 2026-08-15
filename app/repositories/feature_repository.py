@@ -103,6 +103,27 @@ class DailyFeatureRepository:
         rows = (await self._session.execute(stmt)).scalars().all()
         return {row.symbol_id: row for row in rows}
 
+    async def list_top_relative_volume(self, limit: int = 20) -> list[DailyFeature]:
+        """The latest `DailyFeature` row per symbol, restricted to those
+        with a real `relative_volume` reading and ranked by it — a
+        read-only, already-computed view for the dashboard's "Volume /
+        RVOL Leaders" section; `relative_volume`/`volume_spike` are set
+        once by the existing feature pipeline, never recomputed here."""
+        row_number = (
+            func.row_number()
+            .over(partition_by=DailyFeature.symbol_id, order_by=DailyFeature.date.desc())
+            .label("rn")
+        )
+        ranked = select(DailyFeature.id, row_number).subquery()
+        stmt = (
+            select(DailyFeature)
+            .join(ranked, DailyFeature.id == ranked.c.id)
+            .where(ranked.c.rn == 1, DailyFeature.relative_volume.isnot(None))
+            .order_by(DailyFeature.relative_volume.desc())
+            .limit(limit)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
     async def get_history(self, symbol_id: int, limit: int = 100) -> list[DailyFeature]:
         stmt = (
             select(DailyFeature)

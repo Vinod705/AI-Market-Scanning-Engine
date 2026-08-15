@@ -1,10 +1,16 @@
 """Persistence for `oi_observations`."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.derivatives.derivatives_models import OiReading
 from app.models.oi_observation import OiObservation
+
+# Same 4-way classification `SignalFusionEngine._score_oi` already reads
+# (see app/signals/signal_fusion_engine.py) — "buildup" activity broadly,
+# not just the two literal *_BUILDUP labels, since a dashboard reader
+# wants to see covering/unwinding moves too, not only fresh positions.
+_BUILDUP_CLASSIFICATIONS = ("LONG_BUILDUP", "SHORT_BUILDUP", "SHORT_COVERING", "LONG_UNWINDING")
 
 
 class OiObservationRepository:
@@ -47,6 +53,35 @@ class OiObservationRepository:
             select(OiObservation)
             .where(OiObservation.symbol_id == symbol_id)
             .order_by(OiObservation.observed_at.desc())
+            .limit(limit)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def list_latest_buildups(self, limit: int = 20) -> list[OiObservation]:
+        """The latest futures OI reading per symbol, restricted to the
+        4-way buildup/covering/unwinding classification (never NEUTRAL),
+        ranked by the size of the OI move — a read-only, already-computed
+        view for the dashboard's "OI Buildup" section; classification
+        itself was decided once, at ingest time (see
+        `app.derivatives`), never recomputed here."""
+        row_number = (
+            func.row_number()
+            .over(partition_by=OiObservation.symbol_id, order_by=OiObservation.observed_at.desc())
+            .label("rn")
+        )
+        ranked = (
+            select(OiObservation.id, row_number)
+            .where(OiObservation.instrument_type == "FUT")
+            .subquery()
+        )
+        stmt = (
+            select(OiObservation)
+            .join(ranked, OiObservation.id == ranked.c.id)
+            .where(
+                ranked.c.rn == 1,
+                OiObservation.classification.in_(_BUILDUP_CLASSIFICATIONS),
+            )
+            .order_by(func.abs(OiObservation.oi_change_pct).desc())
             .limit(limit)
         )
         return list((await self._session.execute(stmt)).scalars().all())
