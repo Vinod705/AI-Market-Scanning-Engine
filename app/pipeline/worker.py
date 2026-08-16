@@ -14,12 +14,16 @@ import asyncio
 from collections.abc import Callable
 
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.decision.engine import DecisionEngine
 from app.features.engine import FeatureEngine
 from app.pipeline.events import PipelineEvent
 from app.pipeline.queue import PipelineEventQueue
+from app.repositories.worker_heartbeat_repository import WorkerHeartbeatRepository
 from app.scanner.engine import ScannerEngine
+
+WORKER_NAME = "pipeline_worker"
 
 # Backoff after a queue-read failure (e.g. Redis transiently unreachable) so
 # a persistent outage doesn't spin this loop as fast as possible.
@@ -34,6 +38,7 @@ class PipelineWorker:
         scanner_engine: ScannerEngine,
         decision_engine: DecisionEngine,
         is_market_open: Callable[[], bool],
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._queue = queue
         self._feature_engine = feature_engine
@@ -41,6 +46,10 @@ class PipelineWorker:
         self._decision_engine = decision_engine
         self._is_market_open = is_market_open
         self._stopping = False
+        # Optional — see app.sanity's module docstring. None (the default,
+        # and every existing test's constructor call) simply means "don't
+        # ping a heartbeat", never a behavior change to the real pipeline.
+        self._session_factory = session_factory
 
     async def run_forever(self) -> None:
         logger.info("Pipeline worker started")
@@ -56,6 +65,7 @@ class PipelineWorker:
                 try:
                     await self._process(event)
                     await self._queue.ack(message_id)
+                    await self._ping_heartbeat(f"processed source={event.source}")
                 except Exception:  # noqa: BLE001 - one bad event must never kill the worker
                     logger.exception(
                         "Pipeline worker: failed to process event (source={source}, "
@@ -68,6 +78,21 @@ class PipelineWorker:
 
     def stop(self) -> None:
         self._stopping = True
+
+    async def _ping_heartbeat(self, detail: str) -> None:
+        """Read-only-adjacent: the sanity checker's only write anywhere
+        in this project, and even this one is a pure liveness ping, never
+        market/feature/scanner data. A heartbeat-write failure must never
+        take down real pipeline processing — swallowed and logged, same
+        pattern as every other "must never kill this loop" guard here."""
+        if self._session_factory is None:
+            return
+        try:
+            async with self._session_factory() as session:
+                await WorkerHeartbeatRepository(session).ping_success(WORKER_NAME, detail=detail)
+                await session.commit()
+        except Exception:  # noqa: BLE001 - a heartbeat write must never affect real work
+            logger.warning("Pipeline worker: failed to record heartbeat")
 
     async def _process(self, event: PipelineEvent) -> None:
         logger.info(

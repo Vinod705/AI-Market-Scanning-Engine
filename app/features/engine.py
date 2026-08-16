@@ -31,6 +31,9 @@ from app.models.daily_price import DailyPrice
 from app.models.intraday_price import IntradayPrice
 from app.repositories.feature_repository import DailyFeatureRepository, SessionFeatureRepository
 from app.repositories.market_repository import PriceRepository, SymbolRepository
+from app.repositories.worker_heartbeat_repository import WorkerHeartbeatRepository
+
+FEATURE_ENGINE_WORKER_NAME = "feature_engine"
 
 _INTEGER_COLUMNS = {"base_length_days", "sector_rank"}
 _BIGINT_COLUMNS = {"volume_ma20"}
@@ -163,7 +166,24 @@ class FeatureEngine:
             updated=result.symbols_updated,
             rows=result.rows_written,
         )
+        await self._ping_heartbeat(
+            f"{result.symbols_updated} updated, {result.rows_written} rows, "
+            f"{len(result.errors)} errors"
+        )
         return result
+
+    async def _ping_heartbeat(self, detail: str) -> None:
+        """See app.pipeline.worker._ping_heartbeat's docstring — same
+        pattern: a pure liveness signal for app.sanity, never allowed to
+        affect real feature computation."""
+        try:
+            async with self._session_factory() as session:
+                await WorkerHeartbeatRepository(session).ping_success(
+                    FEATURE_ENGINE_WORKER_NAME, detail=detail
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001 - a heartbeat write must never affect real work
+            logger.warning("FeatureEngine: failed to record heartbeat")
 
     async def run_session(self) -> FeatureRunResult:
         result = FeatureRunResult()

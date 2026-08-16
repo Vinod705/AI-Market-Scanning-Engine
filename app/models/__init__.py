@@ -24,6 +24,7 @@ from app.models.sector_rrg_snapshot import SectorRrgSnapshot
 from app.models.session_feature import SessionFeature
 from app.models.symbol import Symbol
 from app.models.user import User
+from app.models.worker_heartbeat import WorkerHeartbeat
 
 __all__ = [
     "Alert",
@@ -50,4 +51,5 @@ __all__ = [
     "SessionFeature",
     "Symbol",
     "User",
+    "WorkerHeartbeat",
 ]

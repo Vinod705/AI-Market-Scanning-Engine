@@ -47,9 +47,30 @@ from app.analytics.market.regime import compute_market_regime
 from app.config.settings import Settings
 from app.core.time import utc_now
 from app.decision.momentum_pipeline_coordinator import MomentumPipelineCoordinator
+from app.repositories.worker_heartbeat_repository import WorkerHeartbeatRepository
 from app.scheduler.service import SchedulerService
 
 JOB_ID_MOMENTUM_PIPELINE = "momentum_pipeline_run"
+MOMENTUM_PIPELINE_WORKER_NAME = "momentum_pipeline"
+
+
+async def _ping_heartbeat(
+    session_factory: async_sessionmaker[AsyncSession], *, success: bool, detail: str
+) -> None:
+    """See app.pipeline.worker._ping_heartbeat's docstring — same pattern.
+    Pinged even on the market-closed skip path (ping_run, not
+    ping_success) so app.sanity can tell "job scheduler alive, correctly
+    skipping" apart from "job scheduler stopped entirely"."""
+    try:
+        async with session_factory() as session:
+            repo = WorkerHeartbeatRepository(session)
+            if success:
+                await repo.ping_success(MOMENTUM_PIPELINE_WORKER_NAME, detail=detail)
+            else:
+                await repo.ping_run(MOMENTUM_PIPELINE_WORKER_NAME, detail=detail)
+            await session.commit()
+    except Exception:  # noqa: BLE001 - a heartbeat write must never affect the live pipeline
+        logger.warning("Momentum pipeline: failed to record heartbeat")
 
 
 async def _compute_regime_evidence(
@@ -78,6 +99,7 @@ async def _run_momentum_pipeline(
 ) -> None:
     if not is_market_open(None):
         logger.debug("Momentum pipeline skipped=true reason=market_closed")
+        await _ping_heartbeat(session_factory, success=False, detail="skipped: market_closed")
         return
 
     moment = utc_now()
@@ -92,6 +114,9 @@ async def _run_momentum_pipeline(
             count=len(result.errors),
             errors=result.errors[:5],
         )
+    await _ping_heartbeat(
+        session_factory, success=True, detail=f"{result.candidates_evaluated} evaluated"
+    )
 
 
 def register_momentum_pipeline_jobs(
