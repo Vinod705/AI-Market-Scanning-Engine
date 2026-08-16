@@ -73,6 +73,52 @@ def test_data_freshness_fails_when_stale() -> None:
     assert result.status == RuleStatus.FAIL
 
 
+def test_data_freshness_uses_feature_date_when_present_and_fresh() -> None:
+    """fno_momentum_v1/pre_breakout_v1/ipo_intraday_v1 stash the real
+    underlying-feature date in feature_snapshot['feature_date'] (see
+    app.candidates.builder) — when it's fresh, the rule passes and
+    reports against that date, not scan_date."""
+    candidate = _candidate(scan_date=date(2026, 1, 5), feature_date="2026-01-05")
+    result = check_data_freshness(candidate, _settings(), now=_MONDAY_MARKET_OPEN)
+    assert result.status == RuleStatus.PASS
+    assert result.actual_value == "2026-01-05"
+    assert "underlying feature data" in result.reason
+
+
+def test_data_freshness_fails_when_feature_date_stale_even_if_scan_date_fresh() -> None:
+    """The real gap this closes: a fresh scanner run (scan_date=today)
+    that scored genuinely stale technical features must NOT read as
+    fresh just because the scanner itself ran today."""
+    settings = Settings(decision_max_data_age_days=1)
+    candidate = _candidate(scan_date=date(2026, 1, 5), feature_date="2020-01-01")
+    result = check_data_freshness(candidate, settings, now=_MONDAY_MARKET_OPEN)
+    assert result.status == RuleStatus.FAIL
+    assert result.actual_value == "2020-01-01"
+    assert "underlying feature data" in result.reason
+
+
+def test_data_freshness_falls_back_to_scan_date_when_feature_date_missing() -> None:
+    """LISTED scanners (breakout_v1/vcp_v1/momentum_v1/orb_v1) never set
+    feature_date — scan_date already *is* the feature date for those, so
+    existing behavior must be unchanged."""
+    candidate = _candidate(scan_date=date(2026, 1, 5))
+    assert "feature_date" not in candidate.feature_snapshot
+    result = check_data_freshness(candidate, _settings(), now=_MONDAY_MARKET_OPEN)
+    assert result.status == RuleStatus.PASS
+    assert result.actual_value == "2026-01-05"
+    assert "scanner result" in result.reason
+
+
+def test_data_freshness_falls_back_to_scan_date_when_feature_date_unparseable() -> None:
+    """A malformed feature_date must degrade to the existing fallback,
+    never raise or silently pass."""
+    candidate = _candidate(scan_date=date(2026, 1, 5), feature_date="not-a-date")
+    result = check_data_freshness(candidate, _settings(), now=_MONDAY_MARKET_OPEN)
+    assert result.status == RuleStatus.PASS
+    assert result.actual_value == "2026-01-05"
+    assert "scanner result" in result.reason
+
+
 def test_minimum_score_passes_above_threshold() -> None:
     settings = Settings(decision_min_alert_score=80.0)
     result = check_minimum_score(_candidate(score=85.0), settings)

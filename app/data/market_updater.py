@@ -3,9 +3,11 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import get_settings
+from app.market_calendar import CalendarYearNotVerifiedError, MarketSegment, is_trading_day
 from app.repositories.market_repository import MarketStatusRepository
 
 
@@ -23,18 +25,41 @@ class MarketStatusUpdater:
 
     @staticmethod
     def is_market_open(now: datetime | None = None) -> bool:
-        """NSE regular session, Mon-Fri, per `Settings.market_open_time` /
-        `market_close_time` / `market_timezone` (defaults 09:15-15:30 IST).
+        """NSE regular session, Mon-Fri excluding NSE holidays, per
+        `Settings.market_open_time` / `market_close_time` /
+        `market_timezone` (defaults 09:15-15:30 IST).
 
-        Does not account for exchange holidays — a full trading calendar is
-        out of scope for this project.
+        Uses the Equity/Capital Market segment calendar
+        (`app.market_calendar`, `MarketSegment.EQUITY`) — this is the
+        single "is the market open" signal shared across this codebase
+        (decision-engine session validity, the ingestion/pipeline
+        workers, momentum pipeline scheduling), all of which are
+        equity/cash-market-driven. Nothing here currently needs a
+        separate F&O session gate.
+
+        Falls back to the pre-calendar weekday-and-hours-only check,
+        with a logged warning, if `now`'s year has no verified NSE
+        holiday data — this is a deliberate, visible degrade to
+        previously-correct behavior, never a silent guess at unverified
+        holiday dates.
         """
         settings = get_settings()
         tz = ZoneInfo(settings.market_timezone)
         moment = (now or datetime.now(tz)).astimezone(tz)
         if moment.weekday() >= 5:  # Saturday, Sunday
             return False
-        return settings.market_open_time <= moment.time() <= settings.market_close_time
+        if not (settings.market_open_time <= moment.time() <= settings.market_close_time):
+            return False
+        try:
+            return is_trading_day(moment.date(), MarketSegment.EQUITY)
+        except CalendarYearNotVerifiedError as exc:
+            logger.warning(
+                "is_market_open: {exc} — falling back to weekday+hours-only check "
+                "(holiday-blind) for {date}",
+                exc=exc,
+                date=moment.date(),
+            )
+            return True
 
     async def record_success(self, *, provider_connected: bool) -> None:
         now = datetime.now(ZoneInfo(get_settings().market_timezone))

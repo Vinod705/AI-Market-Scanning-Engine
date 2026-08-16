@@ -10,7 +10,7 @@ nothing here is hardcoded.
 """
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
 
 from app.config.settings import Settings
 from app.core.time import to_market_time
@@ -81,26 +81,46 @@ def check_required_features(
     )
 
 
+def _effective_freshness_date(candidate: DecisionCandidate) -> tuple[date, str]:
+    """Prefers the scanner's own captured underlying-feature date
+    (`feature_snapshot["feature_date"]`, set by `app.candidates.builder`
+    for the F&O/IPO/pre_breakout candidate scanners) over `scan_date` —
+    for those scanners `scan_date` is only when the scanner *ran*, not
+    how current the technical features it actually scored are, so a
+    fresh scan of stale features must not read as fresh. Falls back to
+    `scan_date` for scanners that don't set this field — the LISTED
+    scanners (breakout_v1/vcp_v1/momentum_v1/orb_v1), whose `scan_date`
+    already *is* the feature date, are unaffected by this change."""
+    raw = candidate.feature_snapshot.get("feature_date")
+    if isinstance(raw, str):
+        try:
+            return date.fromisoformat(raw), "underlying feature data"
+        except ValueError:
+            pass
+    return candidate.scan_date, "scanner result"
+
+
 def check_data_freshness(
     candidate: DecisionCandidate, settings: Settings, *, now: datetime | None = None
 ) -> RuleResult:
-    # `now` is a UTC instant; `scan_date` is an NSE trading-calendar date, so
-    # freshness must be judged against the market's own calendar day (IST),
-    # not UTC's — otherwise the boundary window (UTC evening = IST past
-    # midnight) would compare against the wrong day.
+    # `now` is a UTC instant; the compared date is an NSE trading-calendar
+    # date, so freshness must be judged against the market's own calendar
+    # day (IST), not UTC's — otherwise the boundary window (UTC evening =
+    # IST past midnight) would compare against the wrong day.
     today = to_market_time(now, settings.market_timezone).date() if now is not None else None
+    effective_date, date_source = _effective_freshness_date(candidate)
     fresh = DecisionValidator.is_fresh(
-        candidate.scan_date, max_age_days=settings.decision_max_data_age_days, today=today
+        effective_date, max_age_days=settings.decision_max_data_age_days, today=today
     )
     return RuleResult(
         rule_name="data_freshness",
         status=RuleStatus.PASS if fresh else RuleStatus.FAIL,
-        actual_value=candidate.scan_date.isoformat(),
+        actual_value=effective_date.isoformat(),
         required_value=f"within {settings.decision_max_data_age_days} day(s) of today",
         reason=(
-            "scanner result is current"
+            f"{date_source} is current"
             if fresh
-            else f"scanner result dated {candidate.scan_date.isoformat()} is stale"
+            else f"{date_source} dated {effective_date.isoformat()} is stale"
         ),
     )
 

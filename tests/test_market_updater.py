@@ -30,6 +30,31 @@ def test_is_market_open_on_weekend() -> None:
     assert MarketStatusUpdater.is_market_open(saturday_11am) is False
 
 
+def test_is_market_open_false_on_nse_holiday() -> None:
+    """2026-01-26 (Monday, Republic Day) is a weekday within trading
+    hours — the pre-calendar version of this function would have
+    incorrectly said the market was open."""
+    republic_day_11am = datetime(2026, 1, 26, 11, 0, tzinfo=_IST)
+    assert MarketStatusUpdater.is_market_open(republic_day_11am) is False
+
+
+def test_is_market_open_false_on_equity_only_holiday() -> None:
+    """2026-01-15 is an Equity-segment-only NSE closure — is_market_open
+    uses the Equity calendar (see its docstring), so this must be False
+    even though F&O trades that day."""
+    jan_15_11am = datetime(2026, 1, 15, 11, 0, tzinfo=_IST)
+    assert MarketStatusUpdater.is_market_open(jan_15_11am) is False
+
+
+def test_is_market_open_falls_back_gracefully_for_unverified_year() -> None:
+    """No verified NSE calendar exists for 2030 yet — this must degrade
+    to the pre-calendar weekday+hours check (visibly logged), never
+    crash and never guess holiday dates."""
+    unverified_tuesday_11am = datetime(2030, 1, 8, 11, 0, tzinfo=_IST)
+    assert unverified_tuesday_11am.weekday() < 5
+    assert MarketStatusUpdater.is_market_open(unverified_tuesday_11am) is True
+
+
 async def test_record_success_updates_market_status(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

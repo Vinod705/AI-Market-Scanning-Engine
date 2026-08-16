@@ -214,6 +214,16 @@ async def build_candidate(
     snapshot = _daily_feature_snapshot(daily)
     if session_feature is not None and session_feature.session_vwap is not None:
         snapshot["session_vwap"] = str(session_feature.session_vwap)
+    # `candidate.scan_date` (see CandidateContext.scan_date) is wall-clock,
+    # not this candidate's underlying daily_features date — unlike the
+    # LISTED scanners, whose scan_date *is* the feature date. Stashing the
+    # real feature date here lets DecisionEvaluator's data_freshness rule
+    # (see app.decision.rules.check_data_freshness) tell "this candidate
+    # scanner ran today" apart from "the technical features it scored are
+    # actually current" for F&O/IPO/pre_breakout — see
+    # app.health.freshness's module docstring for why that distinction
+    # matters.
+    snapshot["feature_date"] = daily.date.isoformat()
 
     candidate = StockCandidate(
         symbol=symbol.symbol,
