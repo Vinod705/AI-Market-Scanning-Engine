@@ -10,11 +10,13 @@ the test client, which doesn't run the lifespan) degrades gracefully to
 
 from fastapi import APIRouter, Request
 
+from app.config.settings import get_settings
 from app.core.system_metrics import get_system_metrics
-from app.database.session import check_database_connection
+from app.database.session import AsyncSessionLocal, check_database_connection
 from app.fundamentals.provider import FundamentalDataProvider
 from app.fundamentals.queue_service import FundamentalQueueService
 from app.fundamentals.trendlyne_provider import TrendlyneFundamentalDataProvider
+from app.health.freshness import check_feature_freshness
 from app.notifications.telegram import TelegramProvider
 from app.schemas.health import HealthResponse
 
@@ -30,6 +32,23 @@ async def health_check(request: Request) -> HealthResponse:
         database = "healthy"
     except Exception:  # noqa: BLE001 - a health check must never itself raise
         database = "unhealthy"
+
+    daily_features_freshness = "unknown"
+    daily_features_latest_date: str | None = None
+    daily_prices_latest_date: str | None = None
+    if database == "healthy":
+        try:
+            async with AsyncSessionLocal() as session:
+                freshness = await check_feature_freshness(session, get_settings())
+            daily_features_freshness = "stale" if freshness.is_stale else "healthy"
+            daily_features_latest_date = (
+                freshness.daily_features_date.isoformat() if freshness.daily_features_date else None
+            )
+            daily_prices_latest_date = (
+                freshness.daily_prices_date.isoformat() if freshness.daily_prices_date else None
+            )
+        except Exception:  # noqa: BLE001 - a health check must never itself raise
+            daily_features_freshness = "unhealthy"
 
     provider = getattr(state, "provider", None)
     market_data = "healthy" if provider is not None and provider.is_connected() else "degraded"
@@ -113,6 +132,9 @@ async def health_check(request: Request) -> HealthResponse:
         scanner=pipeline_worker_status,
         decision_engine=pipeline_worker_status,
         ingestion_worker=ingestion_worker_status,
+        daily_features_freshness=daily_features_freshness,
+        daily_features_latest_date=daily_features_latest_date,
+        daily_prices_latest_date=daily_prices_latest_date,
         market_data_feed=market_data_feed,
         alert_queue=alert_queue_status,
         telegram=telegram,

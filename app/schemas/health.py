@@ -15,6 +15,14 @@ class HealthResponse(BaseModel):
     feature_engine: str = "unknown"
     scanner: str = "unknown"
     decision_engine: str = "unknown"
+    # "process is running" (feature_engine/scanner/decision_engine above,
+    # derived from the pipeline_worker task's liveness) is a different
+    # question from "the pipeline is actually producing current data" —
+    # see app.health.freshness. HEALTHY / STALE / UNKNOWN (no price data
+    # at all yet, e.g. a fresh DB).
+    daily_features_freshness: str = "unknown"
+    daily_features_latest_date: str | None = None
+    daily_prices_latest_date: str | None = None
     ingestion_worker: str = "unknown"
     market_data_feed: str = "unknown"
     alert_queue: str = "unknown"

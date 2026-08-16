@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.daily_feature import DailyFeature
 from app.models.session_feature import SessionFeature
+from app.models.symbol import Symbol
 
 # Columns every caller may set via `upsert(**values)`; `values` comes from a
 # pandas row turned into a dict, so this also guards against accidentally
@@ -102,6 +103,18 @@ class DailyFeatureRepository:
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return {row.symbol_id: row for row in rows}
+
+    async def get_latest_date_across_active_symbols(self) -> date_ | None:
+        """The most recent `daily_features.date` across every *active*
+        symbol — counterpart to
+        `PriceRepository.get_latest_date_across_active_symbols`, filtered
+        the same way so the two are directly comparable. Used by the
+        data-freshness guard (`app.health.freshness`). `None` if
+        `daily_features` is empty."""
+        stmt = select(func.max(DailyFeature.date)).join(
+            Symbol, DailyFeature.symbol_id == Symbol.id
+        ).where(Symbol.is_active.is_(True))
+        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_top_relative_volume(self, limit: int = 20) -> list[DailyFeature]:
         """The latest `DailyFeature` row per symbol, restricted to those

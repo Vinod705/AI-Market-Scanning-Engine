@@ -89,4 +89,35 @@ async def test_run_all_with_no_active_symbols_still_records_a_run(
 
     assert result.scanners_run == 1
     assert result.symbols_scanned == 0
+
+
+async def test_run_all_flags_stale_features_without_blocking_scan(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """daily_prices runs 3 days ahead of daily_features: the run must
+    still execute honestly (never a silent empty result) and surface the
+    staleness on its own result rather than hiding it."""
+    async with session_factory() as session:
+        symbol_row = await SymbolRepository(session).upsert(
+            ProviderSymbol(symbol="STALESYM", exchange="N", instrument_token="stale1")
+        )
+        await session.commit()
+        await PriceRepository(session).upsert_daily_many(
+            symbol_row.id,
+            [
+                Candle(timestamp=datetime(2026, 1, d), open=100, high=101, low=99, close=100, volume=1000)
+                for d in (5, 6, 7, 8)
+            ],
+        )
+        await DailyFeatureRepository(session).upsert(
+            symbol_row.id, date(2026, 1, 5), _QUALIFYING_FEATURE_VALUES
+        )
+        await session.commit()
+
+    engine = ScannerEngine(session_factory, _registry())
+    result = await engine.run_all()
+
+    assert result.features_stale is True
+    assert "daily_features" in result.freshness_reason
+    assert result.scanners_run == 1  # scanning still ran, honestly, not silently skipped
     assert result.qualified_count == 0
