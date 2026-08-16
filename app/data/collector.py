@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.config.settings import Settings
 from app.core.time import utc_now
 from app.data.market_updater import MarketStatusUpdater
 from app.data.validator import DataValidator, ValidationError
@@ -33,6 +34,11 @@ class CollectorRunResult:
     success_count: int = 0
     failed_count: int = 0
     errors: list[str] = field(default_factory=list)
+    # Symbol refresh only: names deactivated this run (universe
+    # reconciliation, see MarketDataCollector._reconcile_universe), and a
+    # human-readable note when reconciliation was skipped as unsafe.
+    deactivated_symbols: list[str] = field(default_factory=list)
+    reconciliation_note: str | None = None
 
     @property
     def error_message(self) -> str | None:
@@ -51,10 +57,12 @@ class MarketDataCollector:
         provider: MarketDataProvider,
         session_factory: async_sessionmaker[AsyncSession],
         market_updater: MarketStatusUpdater,
+        settings: Settings | None = None,
     ) -> None:
         self._provider = provider
         self._session_factory = session_factory
         self._market_updater = market_updater
+        self._settings = settings or Settings()
 
     async def collect_symbols(self) -> CollectorRunResult:
         """Refresh the symbol master from the provider into the database."""
@@ -134,10 +142,18 @@ class MarketDataCollector:
         return result
 
     async def _collect_symbols_impl(self) -> CollectorRunResult:
+        # A total-fetch failure (get_symbols() raising) never reaches this
+        # method at all — it's caught by _run()'s own try/except, which
+        # records a market_updater failure and returns before any of this
+        # runs. Only a *successful* fetch (however small) gets here, which
+        # is exactly the case the reconciliation safety-fraction guard
+        # below still needs to handle: a provider can return 200 (empty
+        # body still parses to an empty/short list) without ever raising.
         result = CollectorRunResult()
         provider_symbols = await self._provider.get_symbols()
         result.symbols_processed = len(provider_symbols)
 
+        confirmed_symbols: set[str] = set()
         async with self._session_factory() as session:
             repo = SymbolRepository(session)
             for provider_symbol in provider_symbols:
@@ -145,12 +161,52 @@ class MarketDataCollector:
                     DataValidator.validate_symbol(provider_symbol)
                     await repo.upsert(provider_symbol)
                     result.success_count += 1
+                    confirmed_symbols.add(provider_symbol.symbol)
                 except ValidationError as exc:
                     result.failed_count += 1
                     result.errors.append(str(exc))
+
+            await self._reconcile_universe(repo, confirmed_symbols, result)
             await session.commit()
 
         return result
+
+    async def _reconcile_universe(
+        self, repo: SymbolRepository, confirmed_symbols: set[str], result: CollectorRunResult
+    ) -> None:
+        """Deactivates symbols genuinely missing from this run's
+        successfully-fetched/validated universe — the "removed" half of
+        reconciliation `upsert` doesn't handle (it only ever adds/updates,
+        never deactivates). Guarded against a partial-but-non-raising
+        fetch: if the confirmed set is suspiciously small relative to
+        what was already active, skip deactivation entirely rather than
+        risk mass-deactivating real symbols over a transient truncated
+        response."""
+        previously_active = await repo.list_active()
+        previous_count = len(previously_active)
+        if previous_count == 0:
+            return  # nothing to reconcile against yet (e.g. a fresh DB)
+
+        min_fraction = self._settings.universe_reconciliation_min_fraction
+        if len(confirmed_symbols) < previous_count * min_fraction:
+            result.reconciliation_note = (
+                f"skipped: fetch returned {len(confirmed_symbols)} confirmed symbols, "
+                f"below {min_fraction:.0%} of the {previous_count} currently active — "
+                "treated as a suspicious/partial response, not a real mass-delisting"
+            )
+            logger.warning("Universe reconciliation {note}", note=result.reconciliation_note)
+            return
+
+        deactivated = await repo.deactivate_missing(confirmed_symbols)
+        result.deactivated_symbols = deactivated
+        if deactivated:
+            logger.info(
+                "Universe reconciliation: deactivated {count} symbol(s) no longer in the "
+                "broker's universe: {symbols}",
+                count=len(deactivated),
+                symbols=", ".join(deactivated[:20])
+                + (f" (+{len(deactivated) - 20} more)" if len(deactivated) > 20 else ""),
+            )
 
     async def _collect_intraday_impl(self, symbols: list[Symbol] | None) -> CollectorRunResult:
         return await self._collect_candles(intraday=True, symbols=symbols)

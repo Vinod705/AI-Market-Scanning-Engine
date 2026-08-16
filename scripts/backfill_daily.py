@@ -42,7 +42,6 @@ async def _seed_symbol_cache(provider: FivePaisaProvider) -> int:
             company_name=symbol.company_name,
             sector=symbol.sector,
             industry=symbol.industry,
-            is_ipo=symbol.is_ipo,
         )
         for symbol in symbols
     }

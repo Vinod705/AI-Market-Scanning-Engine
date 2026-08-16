@@ -1,11 +1,14 @@
 """Integration tests for app.features.engine.FeatureEngine against an in-memory DB."""
 
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
+import pandas as pd
+import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.features.engine as engine_module
 from app.config.settings import Settings
 from app.features.engine import FeatureEngine
 from app.providers.base_provider import Candle, ProviderSymbol
@@ -130,6 +133,81 @@ async def test_run_daily_skips_symbol_with_no_price_data(
     assert result.symbols_processed == 1
     assert result.symbols_updated == 0
     assert result.rows_written == 0
+
+
+async def test_run_daily_isolates_one_symbols_calculation_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One symbol's feature calculation raising must not stop the run —
+    other symbols still get processed, and the failure is reported, not
+    swallowed silently."""
+    good_id = await _seed_symbol(session_factory, symbol="GOOD")
+    await _seed_daily_bars(session_factory, good_id, n=25, start=datetime(2026, 1, 1))
+    bad_id = await _seed_symbol(session_factory, symbol="BAD")
+    async with session_factory() as session:
+        # A distinctly-priced series (starts at 900.5, vs GOOD's 100.5) so
+        # the fake calculator below can target only this one symbol.
+        candles = [
+            Candle(
+                timestamp=datetime(2026, 1, 1) + timedelta(days=i),
+                open=900 + i, high=901 + i, low=899 + i, close=900.5 + i, volume=1000 + i * 10,
+            )
+            for i in range(25)
+        ]
+        await PriceRepository(session).upsert_daily_many(bad_id, candles)
+        await session.commit()
+
+    real_calculate = engine_module.DailyFeatureCalculator.calculate
+
+    def _flaky_calculate(df: pd.DataFrame, benchmark_df: pd.DataFrame | None) -> pd.DataFrame:
+        if len(df) and float(df["close"].iloc[0]) == 900.5:
+            raise ValueError("simulated calculation failure")
+        return real_calculate(df, benchmark_df)
+
+    monkeypatch.setattr(engine_module.DailyFeatureCalculator, "calculate", _flaky_calculate)
+
+    engine = FeatureEngine(session_factory, _settings())
+    result = await engine.run_daily()
+
+    assert result.symbols_updated == 1  # GOOD still succeeded
+    assert result.rows_written == 25
+    assert len(result.errors) == 1
+    assert "BAD" in result.errors[0]
+    assert "simulated calculation failure" in result.errors[0]
+
+    async with session_factory() as session:
+        good_history = await DailyFeatureRepository(session).get_history(good_id, limit=100)
+        bad_history = await DailyFeatureRepository(session).get_history(bad_id, limit=100)
+    assert len(good_history) == 25
+    assert bad_history == []  # nothing partially written for the failed symbol
+
+
+async def test_daily_feature_upsert_is_idempotent_for_same_symbol_and_date(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Calling upsert() twice for the same (symbol_id, date) must update
+    the one row in place, never create a duplicate — the project's
+    existing uniqueness strategy (unique index on symbol_id+date), not a
+    new one invented for this test."""
+    symbol_id = await _seed_symbol(session_factory)
+    target_date = date(2026, 1, 5)
+
+    async with session_factory() as session:
+        repo = DailyFeatureRepository(session)
+        await repo.upsert(symbol_id, target_date, {"trend_strength": 50})
+        await session.commit()
+
+    async with session_factory() as session:
+        repo = DailyFeatureRepository(session)
+        await repo.upsert(symbol_id, target_date, {"trend_strength": 75})
+        await session.commit()
+
+    async with session_factory() as session:
+        history = await DailyFeatureRepository(session).get_history(symbol_id, limit=100)
+
+    assert len(history) == 1  # still one row, not two
+    assert float(history[0].trend_strength) == 75  # updated in place
 
 
 async def test_run_daily_bulk_prefilter_correct_across_mixed_symbol_states(

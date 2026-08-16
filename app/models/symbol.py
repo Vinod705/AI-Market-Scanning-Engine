@@ -22,6 +22,12 @@ class Symbol(Base):
     sector: Mapped[str | None] = mapped_column(String(128), nullable=True)
     industry: Mapped[str | None] = mapped_column(String(128), nullable=True)
     listing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # `listing_date` (above) is the sole, authoritative IPO-universe
+    # criterion — see app.universe.provider.UniverseProvider.get_ipo_universe.
+    # `is_ipo` is dormant: never written by any provider (confirmed 0 of
+    # ~9,700 symbols set True live) and never read anywhere. Left in place
+    # rather than dropped via migration — see this project's hardening
+    # audit for why an actual column drop wasn't done unilaterally.
     is_ipo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 

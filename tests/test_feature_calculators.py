@@ -139,6 +139,81 @@ def test_pattern_calculator_returns_all_boolean_columns() -> None:
         assert result[column].dtype == bool
 
 
+# --- pattern_vcp: "each successive 10-bar range tighter than the last"
+# (see PatternFeatureCalculator's module docstring) — a rule-based
+# approximation of Minervini's VCP shape, not a canonical implementation
+# of it (no depth-count/pivot/volume-dry-up logic). These tests verify
+# the actual 3-leg rolling-range comparison, not just "returns a bool
+# column" — the gap flagged in this project's own hardening audit. ---
+
+
+def _three_leg_ohlcv(*, leg_ranges: tuple[float, float, float], leg_bars: int = 10) -> pd.DataFrame:
+    """30 bars in three 10-bar legs (oldest -> newest), each leg trading
+    in a fixed [close-range/2, close+range/2] band around a flat 100
+    close. `leg_ranges` is (oldest_leg, middle_leg, newest_leg) as a
+    percent of price — a VCP-shaped series passes (100, 40, 10)
+    (contracting); an expanding one passes (10, 40, 100)."""
+    rows = []
+    for leg_range_pct in leg_ranges:
+        half = leg_range_pct / 2.0
+        for _ in range(leg_bars):
+            rows.append({"open": 100.0, "high": 100.0 + half, "low": 100.0 - half, "close": 100.0, "volume": 10_000.0})
+    index = pd.date_range("2026-01-01", periods=len(rows), freq="B")
+    return pd.DataFrame(rows, index=index)
+
+
+def test_pattern_vcp_flags_a_genuine_contraction() -> None:
+    """Oldest leg widest (100% range), newest leg tightest (10%) —
+    textbook contraction, must flag True on the most recent bar."""
+    df = _three_leg_ohlcv(leg_ranges=(100.0, 40.0, 10.0))
+    result = PatternFeatureCalculator.calculate(df)
+    assert bool(result["pattern_vcp"].iloc[-1]) is True
+
+
+def test_pattern_vcp_rejects_an_expansion() -> None:
+    """Same shape, reversed — ranges widening, not contracting. Must not
+    flag, proving the check is directional, not just 'ranges differ'."""
+    df = _three_leg_ohlcv(leg_ranges=(10.0, 40.0, 100.0))
+    result = PatternFeatureCalculator.calculate(df)
+    assert bool(result["pattern_vcp"].iloc[-1]) is False
+
+
+def test_pattern_vcp_rejects_flat_unchanging_range() -> None:
+    """All three legs identical — not *tighter*, so must not qualify
+    (the check is strict '<', not '<=')."""
+    df = _three_leg_ohlcv(leg_ranges=(20.0, 20.0, 20.0))
+    result = PatternFeatureCalculator.calculate(df)
+    assert bool(result["pattern_vcp"].iloc[-1]) is False
+
+
+def test_pattern_vcp_false_with_insufficient_bars() -> None:
+    """Fewer than the 30 bars three 10-bar legs need — NaN from the
+    rolling window, safely coerced to False, never raises."""
+    df = make_trending_ohlcv(n=15)
+    result = PatternFeatureCalculator.calculate(df)
+    assert result["pattern_vcp"].dtype == bool
+    assert not result["pattern_vcp"].any()
+
+
+def test_pattern_vcp_handles_nan_prices_without_raising() -> None:
+    df = _three_leg_ohlcv(leg_ranges=(100.0, 40.0, 10.0))
+    df.loc[df.index[5], ["high", "low", "close"]] = np.nan
+    result = PatternFeatureCalculator.calculate(df)
+    assert result["pattern_vcp"].dtype == bool
+    assert result["pattern_vcp"].isna().sum() == 0  # fillna(False) — never leaks NaN into a bool column
+
+
+def test_pattern_vcp_handles_zero_prices_without_raising() -> None:
+    """close=0 would divide-by-zero in the range-pct calc — must resolve
+    to NaN internally (via `close.replace(0, np.nan)`) and then False,
+    not raise or propagate inf."""
+    df = _three_leg_ohlcv(leg_ranges=(100.0, 40.0, 10.0))
+    df.loc[df.index[3:6], "close"] = 0.0
+    result = PatternFeatureCalculator.calculate(df)
+    assert result["pattern_vcp"].dtype == bool
+    assert np.isfinite(result["pattern_vcp"].astype(int)).all()
+
+
 def test_relative_strength_without_benchmark_is_all_nan() -> None:
     df = make_trending_ohlcv(n=30)
     result = RelativeStrengthFeatureCalculator.calculate(df, None)
