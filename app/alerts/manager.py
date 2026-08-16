@@ -18,10 +18,13 @@ from app.alerts.deduplicator import AlertDeduplicator
 from app.alerts.queue import AlertQueue
 from app.alerts.throttler import AlertThrottler
 from app.config.settings import Settings
-from app.core.time import utc_now
+from app.core.time import to_market_time, utc_now
 from app.decision.models import Decision, DecisionResult
 from app.decision.validator import DecisionValidator
 from app.repositories.alert_repository import AlertEventRepository, AlertRepository
+from app.repositories.worker_heartbeat_repository import WorkerHeartbeatRepository
+
+ALERT_MANAGER_WORKER_NAME = "alert_manager"
 
 
 class AlertManager:
@@ -39,7 +42,40 @@ class AlertManager:
         self, decision: DecisionResult, *, symbol_id: int, now: datetime | None = None
     ) -> int | None:
         """Returns the created alert's id, or None if the candidate wasn't
-        alert-worthy or was suppressed (duplicate/cooldown)."""
+        alert-worthy or was suppressed (duplicate/cooldown). Pings a
+        heartbeat on every call that completes without raising — WATCH/
+        REJECT/suppressed are all legitimate successful outcomes of this
+        call, not failures, so app.sanity's "alert_manager" liveness
+        signal moves on all of them, not only real ALERTs."""
+        try:
+            result = await self._process_impl(decision, symbol_id=symbol_id, now=now)
+        except Exception:
+            await self._ping_heartbeat_run_only()
+            raise
+        await self._ping_heartbeat_success(decision)
+        return result
+
+    async def _ping_heartbeat_run_only(self) -> None:
+        try:
+            async with self._session_factory() as session:
+                await WorkerHeartbeatRepository(session).ping_run(ALERT_MANAGER_WORKER_NAME)
+                await session.commit()
+        except Exception:  # noqa: BLE001 - a heartbeat write must never affect real work
+            logger.warning("AlertManager: failed to record heartbeat")
+
+    async def _ping_heartbeat_success(self, decision: DecisionResult) -> None:
+        try:
+            async with self._session_factory() as session:
+                await WorkerHeartbeatRepository(session).ping_success(
+                    ALERT_MANAGER_WORKER_NAME, detail=f"last decision: {decision.decision.value}"
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001 - a heartbeat write must never affect real work
+            logger.warning("AlertManager: failed to record heartbeat")
+
+    async def _process_impl(
+        self, decision: DecisionResult, *, symbol_id: int, now: datetime | None = None
+    ) -> int | None:
         if decision.decision != Decision.ALERT:
             return None
         assert decision.quality is not None  # evaluator always sets quality for ALERT
@@ -112,7 +148,13 @@ class AlertManager:
                 reason="all conditions met: " + ", ".join(decision.passed_rules),
                 passed_rules=decision.passed_rules,
                 fingerprint=fingerprint,
-                signal_date=moment.date(),
+                # `moment` itself stays UTC (a real technical instant) —
+                # only the business-date extraction goes through IST.
+                # Confirmed bug, fixed: this used to be moment.date()
+                # (UTC calendar date), which can misdate an alert by a
+                # full day for anything evaluated in the ~5.5h window
+                # where UTC and IST fall on different calendar dates.
+                signal_date=to_market_time(moment, self._settings.market_timezone).date(),
                 expires_at=moment + timedelta(minutes=self._settings.alert_expiry_minutes),
             )
             await event_repo.log(alert_id=alert.id, event_type="CREATED")

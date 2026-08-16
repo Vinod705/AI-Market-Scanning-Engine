@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.alerts.manager import AlertManager
 from app.config.settings import Settings
-from app.core.time import utc_now
+from app.core.time import to_market_time, utc_now
 from app.decision.models import Decision, DecisionResult, Quality
 from app.momentum import state_machine
 from app.momentum.momentum_models import (
@@ -127,7 +127,13 @@ class MomentumStateEngine:
                 "from_state": transition.from_state.value if transition.from_state else None,
                 "reason": transition.reason,
                 "evidence": transition.evidence,
-                "date": transition.timestamp.date().isoformat(),
+                # This is `AlertDeduplicator`'s primary `signal_date`
+                # source (see app.alerts.deduplicator) — an Indian market
+                # business date, so it must be IST, not a bare `.date()`
+                # on the UTC-stored transition instant.
+                "date": to_market_time(transition.timestamp, settings.market_timezone)
+                .date()
+                .isoformat(),
             },
             timestamp=transition.timestamp,
         )

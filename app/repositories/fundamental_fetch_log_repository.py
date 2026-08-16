@@ -2,12 +2,12 @@
 durable, restart-safe record of every Trendlyne fetch attempt."""
 
 from datetime import UTC
-from datetime import date as date_
 from datetime import datetime as datetime_
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import market_day_bounds_utc, market_today
 from app.fundamentals.queue_models import FetchStatus
 from app.models.fundamental_fetch_log import FundamentalFetchLog
 
@@ -27,11 +27,25 @@ class FundamentalFetchLogRepository:
         return row
 
     async def count_today(self, *, status: FetchStatus | None = None) -> int:
-        today = date_.today()
+        # `requested_at` is stored UTC (`DateTime(timezone=True)`,
+        # `server_default=func.now()`) — but "today" is an Indian market
+        # business date, so it must be judged against the IST calendar
+        # day, not UTC's and not the host's local system date. Comparing
+        # a UTC-truncated `func.date(requested_at)` against an IST `date`
+        # (or vice versa) silently mismatches for ~5.5 hours around IST
+        # midnight — this call site originally used `date.today()` (host
+        # local), was fixed once to UTC, and is now fixed properly to
+        # IST via an explicit UTC range comparison (see
+        # `app.core.time.market_day_bounds_utc`'s docstring for why a
+        # range, not `func.date()`, is the correct approach here).
+        start_utc, end_utc = market_day_bounds_utc(market_today())
         stmt = (
             select(func.count())
             .select_from(FundamentalFetchLog)
-            .where(func.date(FundamentalFetchLog.requested_at) == today)
+            .where(
+                FundamentalFetchLog.requested_at >= start_utc,
+                FundamentalFetchLog.requested_at < end_utc,
+            )
         )
         if status is not None:
             stmt = stmt.where(FundamentalFetchLog.status == status.value)

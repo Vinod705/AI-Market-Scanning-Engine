@@ -16,12 +16,13 @@ redundant DB query — removed as dead code (Phase 4C code-level audit
 found it had zero real callers).
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings
+from app.core.time import market_today
 from app.models.symbol import Symbol
 from app.repositories.fno_universe_repository import FnoUniverseRepository
 from app.repositories.market_repository import SymbolRepository
@@ -51,7 +52,9 @@ class UniverseProvider:
         inferred from `created_at`, the first `daily_prices` bar, or bar
         count.
         """
-        cutoff = date.today() - timedelta(
+        # IST business date — an IPO's age is measured against the Indian
+        # trading calendar, not UTC or the host's local system date.
+        cutoff = market_today(self._settings.market_timezone) - timedelta(
             days=_DAYS_PER_YEAR * self._settings.ipo_universe_max_age_years
         )
         stmt = select(Symbol).where(

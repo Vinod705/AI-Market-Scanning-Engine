@@ -12,6 +12,8 @@ from datetime import date as date_
 from datetime import datetime
 from enum import StrEnum
 
+from app.core.time import now_market_time
+
 
 class Decision(StrEnum):
     ALERT = "ALERT"
@@ -80,5 +82,9 @@ class DecisionResult:
     failed_rules: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     feature_snapshot: dict[str, object] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
+    # Confirmed bug, fixed: defaulted to bare `datetime.now()` (naive,
+    # host-local) — `app.alerts.deduplicator` truncates this to a date as
+    # its `signal_date` fallback, a real business date. Now IST — see
+    # app.core.time's module docstring.
+    timestamp: datetime = field(default_factory=now_market_time)
     rule_results: list[RuleResult] = field(default_factory=list)

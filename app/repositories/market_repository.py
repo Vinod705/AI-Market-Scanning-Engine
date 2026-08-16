@@ -11,6 +11,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import market_date_of
 from app.models.collector_log import CollectorLog
 from app.models.daily_price import DailyPrice
 from app.models.intraday_price import IntradayPrice
@@ -87,7 +88,6 @@ class SymbolRepository:
         existing.listing_date = (
             provider_symbol.listing_date.date() if provider_symbol.listing_date else None
         )
-        existing.is_ipo = provider_symbol.is_ipo
         existing.is_active = True
 
         await self._session.flush()
@@ -100,6 +100,27 @@ class SymbolRepository:
             count += 1
         return count
 
+    async def deactivate_missing(self, current_symbols: set[str]) -> list[str]:
+        """Sets `is_active=False` for every currently-active symbol whose
+        `symbol` is not in `current_symbols` — the "removed from the
+        broker's own universe" half of reconciliation (`upsert`/
+        `upsert_many` already handle "new" and "unchanged"). Returns the
+        list of symbol names actually deactivated.
+
+        Callers are responsible for only calling this with a
+        `current_symbols` set they trust — see
+        `MarketDataCollector._collect_symbols_impl`'s safety-fraction
+        guard, which refuses to call this at all after a suspiciously
+        small/partial fetch. This method itself does no such judgment;
+        it's a pure "make is_active match this exact set" operation.
+        """
+        active = await self.list_active()
+        to_deactivate = [s for s in active if s.symbol not in current_symbols]
+        for symbol_row in to_deactivate:
+            symbol_row.is_active = False
+        await self._session.flush()
+        return [s.symbol for s in to_deactivate]
+
 
 class PriceRepository:
     """Persistence for `daily_prices` and `intraday_prices`."""
@@ -108,12 +129,21 @@ class PriceRepository:
         self._session = session
 
     async def upsert_daily(self, symbol_id: int, candle: Candle) -> None:
+        # IST trading date, explicitly — not a bare `.date()`. Real Upstox
+        # candle timestamps already carry an IST (+05:30) offset, so this
+        # produces the identical result for production data; the explicit
+        # conversion matters for any other timestamp shape (a different
+        # provider, a script, a test) that isn't IST-offset-aware, where a
+        # bare `.date()` would silently read the wrong calendar day. This
+        # exact ambiguity broke a test in this project's own suite before
+        # being made explicit here — not a hypothetical concern.
+        trading_date = market_date_of(candle.timestamp)
         stmt = select(DailyPrice).where(
-            DailyPrice.symbol_id == symbol_id, DailyPrice.date == candle.timestamp.date()
+            DailyPrice.symbol_id == symbol_id, DailyPrice.date == trading_date
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
-            row = DailyPrice(symbol_id=symbol_id, date=candle.timestamp.date())
+            row = DailyPrice(symbol_id=symbol_id, date=trading_date)
             self._session.add(row)
         row.open, row.high, row.low, row.close = candle.open, candle.high, candle.low, candle.close
         row.volume = candle.volume
@@ -257,6 +287,29 @@ class PriceRepository:
         if high is None or low is None:
             return None
         return high, low
+
+    async def get_latest_date_across_active_symbols(self) -> date_ | None:
+        """The most recent `daily_prices.date` across every active symbol —
+        one aggregate query, used by the data-freshness guard (see
+        `app.health.freshness`) to answer "how current is our market data,
+        overall" without an N+1 per-symbol scan. `None` if `daily_prices`
+        is empty (e.g. a freshly-created DB) — not the same thing as
+        "stale", callers must not conflate the two."""
+        stmt = select(func.max(DailyPrice.date)).join(
+            Symbol, DailyPrice.symbol_id == Symbol.id
+        ).where(Symbol.is_active.is_(True))
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_intraday_timestamp_across_active_symbols(self) -> datetime | None:
+        """The most recent `intraday_prices.datetime` across every active
+        symbol — used by the sanity checker's market-data-pipeline check
+        ("is ingestion connected but nothing is actually being
+        processed"), analogous to `get_latest_date_across_active_symbols`
+        above but at tick/candle granularity rather than daily-bar."""
+        stmt = select(func.max(IntradayPrice.datetime)).join(
+            Symbol, IntradayPrice.symbol_id == Symbol.id
+        ).where(Symbol.is_active.is_(True))
+        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def get_intraday_at_or_after(
         self, symbol_id: int, moment: datetime

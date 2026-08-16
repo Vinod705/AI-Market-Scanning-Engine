@@ -290,7 +290,12 @@ def _apply_key_ratios(data: FundamentalData, payload: list[object]) -> bool:
 def _parse_period(period: object) -> date_ | None:
     """Upstox periods are like `"Mar 2026"` — parsed only to pick the
     latest history entry's date, never displayed/stored verbatim as a
-    fabricated day-of-month."""
+    fabricated day-of-month. Reviewed for the IST-business-date audit:
+    a financial reporting period (a fiscal quarter/year) is not an
+    Indian trading-session date, so it's intentionally left as a
+    UTC-tagged month/year marker used only for chronological ordering
+    between periods — never compared against `daily_prices`/
+    `daily_features` or any trading-calendar business date."""
     if not isinstance(period, str):
         return None
     try:

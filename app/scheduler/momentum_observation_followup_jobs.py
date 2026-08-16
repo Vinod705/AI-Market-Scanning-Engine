@@ -19,7 +19,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config.settings import Settings
-from app.core.time import utc_now
+from app.core.time import to_market_time, utc_now
 from app.models.momentum_alert_observation import MomentumAlertObservation
 from app.repositories.market_repository import PriceRepository
 from app.repositories.momentum_alert_observation_repository import (
@@ -58,8 +58,13 @@ async def _fill_1h(price_repo: PriceRepository, row: MomentumAlertObservation) -
     return True
 
 
-async def _fill_1d(price_repo: PriceRepository, row: MomentumAlertObservation) -> bool:
-    target_date = (row.trigger_at + _HORIZON_1D).date()
+async def _fill_1d(
+    price_repo: PriceRepository, row: MomentumAlertObservation, market_timezone: str
+) -> bool:
+    # `daily_prices.date` is an IST trading date, so the "1 trading day
+    # later" target must be derived in IST — an explicit conversion, not
+    # a bare `.date()` on the UTC-stored `trigger_at`.
+    target_date = to_market_time(row.trigger_at + _HORIZON_1D, market_timezone).date()
     bar = await price_repo.get_daily_at_or_after(row.symbol_id, target_date)
     if bar is None:
         return False
@@ -83,7 +88,7 @@ async def _run_followup(session_factory: async_sessionmaker[AsyncSession], setti
             if await _fill_1h(price_repo, row):
                 filled["1h"] += 1
         for row in await obs_repo.list_awaiting_1d(now - _HORIZON_1D):
-            if await _fill_1d(price_repo, row):
+            if await _fill_1d(price_repo, row, settings.market_timezone):
                 filled["1d"] += 1
 
         await session.commit()

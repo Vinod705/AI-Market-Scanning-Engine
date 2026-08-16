@@ -9,8 +9,6 @@ returned is a direct read or arithmetic derivation of data the scanner/
 decision engine already computed.
 """
 
-from datetime import date as date_
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.candidates.explainer import (
@@ -22,7 +20,7 @@ from app.candidates.explainer import (
 from app.compounding.engine import evaluate_compounding
 from app.compounding.models import CompoundingResult
 from app.config.settings import Settings
-from app.core.time import utc_now
+from app.core.time import market_today, utc_now
 from app.decision.evaluator import DecisionEvaluator
 from app.decision.models import DecisionCandidate, RuleResult, derive_signal_type
 from app.decision.validator import DecisionValidator
@@ -198,7 +196,11 @@ class CandidateService:
 
         compounding = evaluate_compounding(snapshot, self._settings)
 
-        days_old = (date_.today() - result.date).days
+        # IST business date, not UTC and not the host's local system date
+        # — `result.date` is an Indian trading date, so "how many days
+        # old" must be measured against the IST calendar day. See
+        # app.core.time's module docstring for the full reasoning.
+        days_old = (market_today() - result.date).days
         data_freshness = DataFreshnessOut(
             scan_date=result.date,
             days_old=days_old,

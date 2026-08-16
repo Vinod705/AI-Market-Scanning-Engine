@@ -39,7 +39,18 @@ class SessionFeatureCalculator:
         if intraday_df.empty:
             return SessionFeatures(None, None, None, None, None, None, None)
 
-        session_date = intraday_df.index[0].date()
+        # Explicit IST business date, not a bare `.date()` on whatever tz
+        # the first bar's index happens to carry — this coincides with
+        # `intraday_df.index.tz`'s own calendar date during real NSE
+        # market hours (09:15-15:30 IST never crosses a UTC midnight),
+        # but doesn't rely on that coincidence for a stray pre/post-market
+        # bar (e.g. from a WS reconnect gap-fill).
+        first_bar = intraday_df.index[0]
+        session_date = (
+            first_bar.tz_convert(ZoneInfo(market_timezone)).date()
+            if first_bar.tzinfo is not None
+            else first_bar.date()
+        )
         naive_market_open = pd.Timestamp.combine(session_date, _MARKET_OPEN)
         if intraday_df.index.tz is not None:
             # Bug fix: this used to tz_localize the naive "9:15" directly

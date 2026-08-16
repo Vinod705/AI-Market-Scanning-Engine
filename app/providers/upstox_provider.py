@@ -466,7 +466,13 @@ class UpstoxProvider(MarketDataProvider, DerivativesProvider):
     @staticmethod
     def _expiry_date(expiry_ms: int) -> date:
         """Upstox reports `expiry` as epoch milliseconds (UTC) — see the
-        real `NSE_FO` records verified live this session."""
+        real `NSE_FO` records verified live this session. Reviewed for
+        the IST-business-date audit: this is a *fixed exchange fact*
+        (the contract's own expiry date, e.g. "last Thursday of the
+        month"), not a "what is today" computation, and the epoch
+        encodes UTC midnight of that date — `.date()` on it is correct
+        as-is; converting through IST would only add 5.5 hours within
+        the same calendar day, never changing the result."""
         return datetime.fromtimestamp(expiry_ms / 1000, tz=UTC).date()
 
     @staticmethod

@@ -19,6 +19,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
+from app.core.time import now_market_time
 from app.models.symbol import Symbol
 
 
@@ -75,7 +76,13 @@ class StockCandidate:
     setup_state: SetupState | None
     alert_category: AlertCategory | None
     reason: str
-    timestamp: datetime = field(default_factory=datetime.now)
+    # Confirmed bug, fixed: this defaulted to bare `datetime.now()` (naive,
+    # host-local-timezone) — `scan_date` (below) truncates this to a date,
+    # which is the actual `scanner_results.date` for every F&O/IPO/
+    # pre-breakout candidate. Now explicitly IST — see
+    # app.core.time's module docstring for why bare datetime.now() and
+    # UTC are each wrong here.
+    timestamp: datetime = field(default_factory=now_market_time)
     # Which discovery source(s) independently flagged this symbol — see
     # `app.candidates.sources`. Defaults to 5paisa-only: every candidate
     # this pipeline produces is already 5paisa-data-driven by construction.
@@ -156,6 +163,10 @@ class CandidateContext:
 
     @property
     def scan_date(self) -> date:
+        """The Indian trading date this candidate was scored on —
+        correct because `candidate.timestamp` is now always IST-aware
+        (see its field docstring); `.date()` on an aware datetime uses
+        that datetime's own attached offset, not UTC."""
         return self.candidate.timestamp.date()
 
     def feature_snapshot(self) -> dict[str, object]:
