@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Project Sanity Dashboard</title>
+<style>
+  :root {
+    --bg: #0e1117; --panel: #161b22; --line: #2a2f3a;
+    --ink: #e6edf3; --muted: #8b949e;
+    --healthy: #3fb950; --warning: #d29922; --stale: #f0883e;
+    --failed: #f85149; --blocked: #f85149; --unknown: #6e7681;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 14px; line-height: 1.5; padding: 1.5rem;
+  }
+  h1 { font-size: 1.1rem; margin: 0 0 .25rem; font-weight: 700; }
+  .subtitle { color: var(--muted); font-size: .8rem; margin-bottom: 1.25rem; }
+  .overall {
+    display: inline-block; padding: .5rem 1rem; border-radius: 4px; font-weight: 700;
+    font-size: 1rem; margin-bottom: 1.25rem; border: 1px solid var(--line);
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1rem; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1rem; }
+  .panel h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 .75rem; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: .3rem 0; border-bottom: 1px solid var(--line); }
+  td:first-child { color: var(--ink); }
+  td:last-child { text-align: right; }
+  .pill { display: inline-block; padding: .1rem .55rem; border-radius: 3px; font-weight: 700; font-size: .75rem; }
+  .pill.HEALTHY { background: rgba(63,185,80,.15); color: var(--healthy); }
+  .pill.WARNING { background: rgba(210,153,34,.15); color: var(--warning); }
+  .pill.STALE { background: rgba(240,136,62,.15); color: var(--stale); }
+  .pill.FAILED, .pill.BLOCKED { background: rgba(248,81,73,.15); color: var(--failed); }
+  .pill.NOT_CONFIGURED, .pill.UNKNOWN { background: rgba(110,118,129,.15); color: var(--unknown); }
+  .issues { margin-top: 1rem; }
+  .issue { padding: .5rem; border-left: 3px solid var(--stale); background: rgba(240,136,62,.08); margin-bottom: .4rem; font-size: .85rem; }
+  .dates div { display: flex; justify-content: space-between; padding: .25rem 0; border-bottom: 1px solid var(--line); }
+  .muted { color: var(--muted); }
+  .refresh { color: var(--muted); font-size: .75rem; margin-left: .75rem; }
+  .cleanup-item { padding: .5rem 0; border-bottom: 1px solid var(--line); font-size: .82rem; }
+  .cleanup-item .path { color: var(--ink); font-weight: 700; }
+  .cleanup-item .meta { color: var(--muted); }
+  button { background: var(--panel); border: 1px solid var(--line); color: var(--ink); padding: .35rem .8rem; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: .8rem; }
+  button:hover { border-color: var(--muted); }
+  .counts { display: flex; gap: 1.5rem; margin-bottom: .75rem; }
+  .counts div { text-align: center; }
+  .counts .n { font-size: 1.4rem; font-weight: 700; display: block; }
+</style>
+</head>
+<body>
+  <h1>Project Sanity Dashboard</h1>
+  <div class="subtitle">Read-only diagnostic view of market-intelligence. Separate from the trading dashboard — no shared navigation or data.</div>
+
+  <div id="overall" class="overall">Loading…</div>
+  <span class="refresh" id="checkedAt"></span>
+  <div class="subtitle" id="istContext" style="margin-top:.35rem;"></div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Workers &amp; Applications</h2>
+      <table id="workersTable"><tbody></tbody></table>
+    </div>
+    <div class="panel">
+      <h2>Infrastructure</h2>
+      <table id="infraTable"><tbody></tbody></table>
+    </div>
+    <div class="panel">
+      <h2>Data Freshness</h2>
+      <div class="dates" id="freshnessTable"></div>
+    </div>
+    <div class="panel">
+      <h2>Scanners</h2>
+      <table id="scannersTable"><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="panel issues">
+    <h2>Current Issues</h2>
+    <div id="issuesList"><span class="muted">None</span></div>
+  </div>
+
+  <div class="panel" style="margin-top:1rem;">
+    <h2>Project Cleanup <button onclick="loadCleanup()" style="float:right;">Run scan</button></h2>
+    <div class="counts" id="cleanupCounts">
+      <div><span class="n" id="cUnused">–</span>Unused</div>
+      <div><span class="n" id="cDup">–</span>Duplicate</div>
+      <div><span class="n" id="cLegacy">–</span>Legacy</div>
+      <div><span class="n" id="cDeps">–</span>Unused deps</div>
+    </div>
+    <div id="cleanupList"><span class="muted">Click "Run scan" — this walks the whole repository, not run automatically on every page load.</span></div>
+  </div>
+
+<script>
+function pill(status) {
+  return `<span class="pill ${status}">${status}</span>`;
+}
+
+async function loadStatus() {
+  const res = await fetch('/sanity/status');
+  const data = await res.json();
+
+  const overallEl = document.getElementById('overall');
+  overallEl.textContent = 'SYSTEM STATUS: ' + data.overall_status;
+  overallEl.style.color = {
+    HEALTHY: 'var(--healthy)', WARNING: 'var(--warning)', STALE: 'var(--stale)',
+    FAILED: 'var(--failed)', BLOCKED: 'var(--blocked)'
+  }[data.overall_status] || 'var(--unknown)';
+  document.getElementById('checkedAt').textContent = 'checked (IST) ' + (data.checked_at_ist ? new Date(data.checked_at_ist).toLocaleString() : '—');
+  document.getElementById('istContext').textContent =
+    `Current IST time: ${data.checked_at_ist ? new Date(data.checked_at_ist).toLocaleString() : '—'}` +
+    `   ·   Indian trading date: ${data.current_market_date || '—'}` +
+    `   ·   Timezone: ${data.market_timezone || '—'}`;
+
+  const workerNames = new Set(['pipeline_worker', 'feature_engine', 'scanner_engine', 'momentum_pipeline', 'alert_manager']);
+  const infraNames = new Set(['Application Timezone', 'Market Calendar', 'PostgreSQL', 'Redis', 'Market Data', 'daily_prices', 'daily_features']);
+
+  const workersRows = data.components.filter(c => workerNames.has(c.name));
+  const infraRows = data.components.filter(c => infraNames.has(c.name));
+
+  // Business-facing times are always shown in IST (last_success_at_ist),
+  // never the raw UTC instant — per this project's IST-authoritative rule.
+  document.querySelector('#workersTable tbody').innerHTML = workersRows.map(c =>
+    `<tr><td>${c.name}${c.last_success_at_ist ? ' <span class="muted">(' + new Date(c.last_success_at_ist).toLocaleString() + ' IST)</span>' : ''}</td><td>${pill(c.status)}</td></tr>`
+  ).join('');
+
+  document.querySelector('#infraTable tbody').innerHTML = infraRows.map(c =>
+    `<tr><td>${c.name}${c.detail ? '<br/><span class="muted" style="font-size:.75rem;">' + c.detail + '</span>' : ''}</td><td>${pill(c.status)}</td></tr>`
+  ).join('');
+
+  document.getElementById('freshnessTable').innerHTML = `
+    <div><span>daily_prices</span><span>${data.daily_prices_latest_date || '—'}</span></div>
+    <div><span>daily_features</span><span>${data.daily_features_latest_date || '—'}</span></div>
+  `;
+
+  document.querySelector('#scannersTable tbody').innerHTML = data.scanners.map(s =>
+    `<tr><td>${s.scanner_name}${s.latest_result_date ? ' <span class="muted">(' + s.latest_result_date + ')</span>' : ''}</td><td>${pill(s.status)}</td></tr>`
+  ).join('');
+
+  const issuesEl = document.getElementById('issuesList');
+  issuesEl.innerHTML = data.issues.length
+    ? data.issues.map(i => `<div class="issue">${i}</div>`).join('')
+    : '<span class="muted">None</span>';
+}
+
+async function loadCleanup() {
+  document.getElementById('cleanupList').innerHTML = '<span class="muted">Scanning…</span>';
+  const res = await fetch('/sanity/cleanup');
+  const data = await res.json();
+
+  document.getElementById('cUnused').textContent = data.unused_count;
+  document.getElementById('cDup').textContent = data.duplicate_count;
+  document.getElementById('cLegacy').textContent = data.legacy_count;
+  document.getElementById('cDeps').textContent = data.unused_dependency_count;
+
+  const all = [...data.findings, ...data.unused_dependency_candidates];
+  document.getElementById('cleanupList').innerHTML = all.length
+    ? all.map(f => `
+        <div class="cleanup-item">
+          <span class="path">${f.path}</span> — ${pill(f.classification)} <span class="meta">confidence: ${f.confidence}</span><br/>
+          <span class="meta">${f.reason}</span>
+          ${f.references && f.references.length ? `<br/><span class="meta">Also: ${f.references.join(', ')}</span>` : ''}
+        </div>
+      `).join('')
+    : '<span class="muted">No findings.</span>';
+}
+
+loadStatus();
+setInterval(loadStatus, 30000);
+</script>
+</body>
+</html>
