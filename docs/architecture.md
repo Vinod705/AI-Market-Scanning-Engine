@@ -13,9 +13,12 @@ See `README.md`, sections:
 - Market data architecture
 - Feature engine architecture
 - Scanner engine architecture
-- Decision & Alert engine architecture
+- Candidate pipeline (F&O / IPO)
+- Fundamental analysis
+- Decision & Alert architecture
+- Operational notes
 - API endpoints
-- Dashboard, auth, and the F&O/IPO explainability API
+- Dashboard, auth, and explainability
 
 ## Notes not covered in the README
 
