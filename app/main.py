@@ -20,6 +20,7 @@ from app.api.features import router as features_router
 from app.api.fundamental_queue import router as fundamental_queue_router
 from app.api.health import router as health_router
 from app.api.market import router as market_router
+from app.api.sanity import router as sanity_router
 from app.api.scanner import router as scanner_router
 from app.auth.redis_client import check_redis_connection, dispose_redis, redis_client
 from app.candidates.fno_momentum_scanner import FnoMomentumScanner
@@ -129,7 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # and UpstoxProvider implement it, so whichever provider is primary
     # above is reused directly here — no second connection/instance needed.
     market_updater = MarketStatusUpdater(AsyncSessionLocal)
-    collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater)
+    collector = MarketDataCollector(provider, AsyncSessionLocal, market_updater, settings)
     feature_engine = FeatureEngine(AsyncSessionLocal, settings)
 
     # Pipeline: ingestion -> Redis Stream -> PipelineWorker (feature ->
@@ -201,7 +202,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scanner_registry.register(FnoMomentumScanner(settings, source_providers))
     scanner_registry.register(PreBreakoutScanner(settings, source_providers))
     scanner_registry.register(IpoIntradayScanner(settings, source_providers))
-    scanner_engine = ScannerEngine(AsyncSessionLocal, scanner_registry)
+    scanner_engine = ScannerEngine(AsyncSessionLocal, scanner_registry, settings)
 
     # Fundamental Queue (Phase 7.x): processes candidates in small, paced
     # batches instead of firing a Trendlyne request per scanned symbol —
@@ -256,6 +257,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scanner_engine,
         decision_engine,
         market_updater.is_market_open,
+        AsyncSessionLocal,
     )
     # Phase 3: when Upstox is primary AND configured, its WebSocket feed
     # becomes the continuous live-data path (see app.providers.upstox_websocket)
@@ -380,6 +382,10 @@ def create_app() -> FastAPI:
     app.include_router(admin_users_router)
     app.include_router(fundamental_queue_router)
     app.include_router(dashboard_router)
+    # Project Sanity Check — a deliberately separate diagnostic surface,
+    # never linked from or added to the trading dashboard above. See
+    # app/api/sanity.py's module docstring.
+    app.include_router(sanity_router)
 
     return app
 

@@ -76,6 +76,29 @@ class Settings(BaseSettings):
     # How often the ingestion loop re-checks "is the market open yet"
     # while it's closed, instead of busy-looping.
     market_closed_poll_interval_seconds: float = 30.0
+    # Universe reconciliation safety guard (symbol refresh job): a
+    # successful fetch that returns fewer than this fraction of the
+    # previously-active symbol count is treated as suspicious (a
+    # transient partial response, not a genuine mass-delisting) and
+    # deactivation is skipped entirely for that run, logged loudly
+    # instead. Never deactivates on a fetch that raised — that already
+    # short-circuits before reconciliation runs at all.
+    universe_reconciliation_min_fraction: float = 0.5
+
+    # --- Project Sanity Check (app.sanity) — separate, read-only diagnostic
+    # system, not part of the trading pipeline itself. Worker heartbeat
+    # staleness thresholds, in seconds. Two tiers: event-driven workers
+    # (pipeline_worker/feature_engine/scanner_engine/alert_manager — no
+    # fixed schedule, only ping when a real Redis event or alert decision
+    # arrives, so a multi-hour gap can be entirely normal on a dev box that
+    # isn't running continuously) get a generous tolerance; momentum_pipeline
+    # (a fixed 60s-interval scheduled job that pings even on a market-closed
+    # skip) can use a much tighter one since it should genuinely never go
+    # quiet for long while the process is alive. ---
+    sanity_worker_heartbeat_warning_seconds: float = 21_600.0  # 6h
+    sanity_worker_heartbeat_stale_seconds: float = 86_400.0  # 24h
+    sanity_momentum_pipeline_warning_seconds: float = 300.0  # 5 min (job runs every 60s)
+    sanity_momentum_pipeline_stale_seconds: float = 900.0  # 15 min
     # Redis Stream connecting ingestion to the downstream feature/scanner/
     # decision worker (see app.pipeline) — reuses the same Redis instance
     # app.auth.redis_client already requires for dashboard sessions.
@@ -207,6 +230,12 @@ class Settings(BaseSettings):
     scanner_breakout_resistance_proximity_pct: float = 3.0
     scanner_min_qualifying_score: float = 60.0
 
+    # --- Scanner engine: Momentum Scanner v1 threshold ---
+    # Value (50.0) and LISTED universe scope were explicitly specified by
+    # the user for this scanner, not inferred or invented — see
+    # app/scanner/momentum_scanner.py's module docstring.
+    scanner_momentum_min_score: float = 50.0
+
     # --- Scanner engine: composite score weights (should sum to 1.0) ---
     scanner_score_weight_trend: float = 0.25
     scanner_score_weight_momentum: float = 0.20
@@ -257,6 +286,18 @@ class Settings(BaseSettings):
     # How old a scanner result's underlying feature date may be before the
     # "market data freshness" rule rejects it as stale.
     decision_max_data_age_days: int = 1
+
+    # --- Data-freshness guard (app.health.freshness) ---
+    # A *system-wide* signal — "is daily_features actually keeping up with
+    # daily_prices at all" — surfaced via /health and a startup-of-run log
+    # line, distinct from `decision_max_data_age_days` above (which judges
+    # one already-computed scanner_results row against wall-clock "now").
+    # This one compares two tables' own latest dates against each other, so
+    # it stays meaningful even on a closed-market day when "now" isn't a
+    # useful reference point. 2 days tolerates one normal EOD-timing lag
+    # (the daily collector job runs after market close) without a false
+    # STALE flag on an ordinary day.
+    feature_freshness_max_lag_days: int = 2
 
     # --- Alert manager ---
     alert_cooldown_minutes: int = 30
