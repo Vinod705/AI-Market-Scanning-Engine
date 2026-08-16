@@ -114,6 +114,22 @@ def test_scan_qualification_independent_of_score() -> None:
     assert score < 50.0
 
 
+def test_scanner_momentum_min_score_setting_defaults_to_50() -> None:
+    assert Settings().scanner_momentum_min_score == 50.0
+
+
+def test_scan_threshold_is_configurable_via_settings() -> None:
+    """The qualifying threshold reads from Settings, not a hardcoded
+    constant — a lowered/raised scanner_momentum_min_score must actually
+    change scan() behavior."""
+    strict_scanner = MomentumScanner(Settings(scanner_momentum_min_score=90.0))
+    lenient_scanner = MomentumScanner(Settings(scanner_momentum_min_score=10.0))
+    context = _context(momentum_score=Decimal("55"))
+
+    assert strict_scanner.scan(context).qualified is False
+    assert lenient_scanner.scan(context).qualified is True
+
+
 def test_momentum_registers_in_scanner_registry_by_name() -> None:
     registry = ScannerRegistry()
     registry.register(MomentumScanner(Settings()))

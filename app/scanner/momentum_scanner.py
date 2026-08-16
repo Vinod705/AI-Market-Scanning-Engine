@@ -1,14 +1,16 @@
 """Momentum Scanner v1: LISTED-universe momentum setup.
 
-Qualification is `DailyFeature.momentum_score >= 50` alone — no other
-condition. `momentum_score` is already computed by
-`app.features.momentum.calculator.MomentumFeatureCalculator` (documented
-there as a -100..+100 heuristic blend of RSI distance from 50 and
-normalized MACD histogram, "a single sortable momentum number"); this
+Qualification is `DailyFeature.momentum_score >= settings.scanner_momentum_min_score`
+(default 50.0) alone — no other condition. `momentum_score` is already
+computed by `app.features.momentum.calculator.MomentumFeatureCalculator`
+(documented there as a -100..+100 heuristic blend of RSI distance from 50
+and normalized MACD histogram, "a single sortable momentum number"); this
 scanner adds no new calculation, just a qualification gate on top of an
-already-computed, already-documented signal — the exact threshold (50)
+already-computed, already-documented signal — the default threshold (50)
 and universe scope (LISTED) were explicitly specified by the user, not
-inferred or invented.
+inferred or invented; it's now a `Settings` field (like every other
+scanner's thresholds) instead of a hardcoded constant, so it can be tuned
+via `.env` without a code change.
 
 This is a different, separate concept from `SetupState.MOMENTUM` (the
 F&O/IPO candidate pipeline's resistance/ADX-based continuation state,
@@ -30,8 +32,6 @@ from app.repositories.market_repository import PriceRepository
 from app.scanner.base_scanner import BaseScanner
 from app.scanner.models import ScanContext, ScannerContext, ScanOutcome, ValidationResult
 from app.scanner.validator import ScannerValidator
-
-_MOMENTUM_SCORE_QUALIFYING_THRESHOLD = 50.0
 
 
 class MomentumScanner(BaseScanner):
@@ -76,11 +76,12 @@ class MomentumScanner(BaseScanner):
         assert isinstance(context, ScanContext)
         momentum_score = context.features.momentum_score
         assert momentum_score is not None  # validate() already required this
-        qualified = float(momentum_score) >= _MOMENTUM_SCORE_QUALIFYING_THRESHOLD
+        threshold = self._settings.scanner_momentum_min_score
+        qualified = float(momentum_score) >= threshold
         reason = (
-            f"momentum_score={momentum_score} >= {_MOMENTUM_SCORE_QUALIFYING_THRESHOLD}"
+            f"momentum_score={momentum_score} >= {threshold}"
             if qualified
-            else f"momentum_score={momentum_score} < {_MOMENTUM_SCORE_QUALIFYING_THRESHOLD}"
+            else f"momentum_score={momentum_score} < {threshold}"
         )
         return ScanOutcome(qualified=qualified, reason=reason)
 
